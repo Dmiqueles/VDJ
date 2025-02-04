@@ -10,7 +10,7 @@ import pandas as pd
 
 # Configuración inicial de la página (debe ser la primera llamada)
 st.set_page_config(
-    page_title="Gestor de Playlists 24h",
+    page_title="RUDO.VOD",
     page_icon="🎧",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -49,7 +49,7 @@ def check_login():
         with st.container():
             col1, col2, col3 = st.columns([1,3,1])
             with col2:
-                st.title("🔐 Acceso al Sistema")
+                st.title("🔐 Acceso")
                 user = st.text_input("Usuario")
                 password = st.text_input("Contraseña", type="password")
                 
@@ -452,10 +452,7 @@ def main():
         
         st.markdown("---")
         
-        # Sección de Horarios (Configuración menos importante)
-        st.subheader("⏰ Configuración de Horarios")
-        start_time = st.time_input("Hora de inicio", value=datetime.strptime("05:59:00", "%H:%M:%S").time())
-        end_time = st.time_input("Hora de fin", value=datetime.strptime("23:59:00", "%H:%M:%S").time())
+       
 
         # Mostrar la lista de programas en una tabla
         st.markdown("---")
@@ -467,15 +464,21 @@ def main():
             st.dataframe(programs_df, use_container_width=True, hide_index=True)
         else:
             st.write("No hay programas cargados.")
+        
+
+         # Sección de Horarios (Configuración menos importante)
+        st.subheader("⏰ Configuración de Horarios")
+        start_time = st.time_input("Hora de inicio", value=datetime.strptime("05:59:00", "%H:%M:%S").time())
+        end_time = st.time_input("Hora de fin", value=datetime.strptime("23:59:00", "%H:%M:%S").time())
 
     # ------------------------------------------------------
     # Cuerpo Principal de la Aplicación
     # ------------------------------------------------------
-    st.title("🎵 Generador de Playlist")
+    st.title("VJD")
     st.markdown("---")
 
     # Cargar datos
-    with st.spinner("🔍 Cargando programas y promos..."): 
+    with st.spinner("🔍 Cargando programas, promos y rellenos..."): 
         promos = load_promos_from_google_sheet()
         user_programs = load_programs_from_google_sheet()
         fillers = load_fillers_from_google_sheet(selected_sheet) if sheets else []
@@ -486,7 +489,7 @@ def main():
     # Generar playlist
     col1, col2 = st.columns([1,3])
     with col1:
-        if st.button("🎶 Generar Playlist", type="primary", help="Genera una nueva playlist basada en los parámetros actuales"):
+        if st.button("Generar", type="primary", help="Genera una nueva playlist basada en los parámetros actuales"):
             if not user_programs or not promos or not fillers:
                 st.session_state.messages.append({"type": "warning", "content": "Faltan datos para generar la playlist"})
             else:
