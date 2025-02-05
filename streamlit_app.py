@@ -245,42 +245,59 @@ def export_to_google_sheets(playlist, sheet_title):
     except Exception as e:
         st.session_state.messages.append({"type": "error", "content": f"Error al exportar a Google Sheets: {e}"})
 
-# Función para generar la playlist
 def generate_playlist(start_time, end_time, promos, fillers, user_programs):
     current_time = start_time
     playlist = []
     block_counter = 1
     user_program_index = 0
     item_counter = 1
-
-    # Calcular el tiempo total de la playlist
+    tanda_count = 0
+    max_tandas = 3
+    
     total_time = (end_time - start_time).total_seconds()
     elapsed_time = 0
-
-    # Barra de progreso
     progress_bar = st.progress(0)
-    status_text = st.empty()  # Para mostrar el estado actual
-
-    # Agregar tanda de 60 segundos al inicio
-    tanda_duration = 60
-    playlist.append({
-        "item": item_counter,
-        "start_time": current_time.strftime("%H:%M:%S"),
-        "name": "Tanda 60 segundos",
-        "duration": str(timedelta(seconds=tanda_duration)),
-        "type": "Tanda",
-        "block": block_counter
-    })
-    item_counter += 1
-    current_time += timedelta(seconds=tanda_duration)
-    elapsed_time += tanda_duration
-
-    # Actualizar barra de progreso
-    progress = min(elapsed_time / total_time, 1.0)
-    progress_bar.progress(progress)
-    status_text.text(f"Generando playlist... {int(progress * 100)}% completado")
-
+    status_text = st.empty()
+    
     while current_time < end_time:
+        next_block_time = calculate_time_to_next_block(current_time)
+        time_until_next_block = (next_block_time - current_time).total_seconds()
+
+        if time_until_next_block > 0:
+            selected_content = select_content(time_until_next_block, promos + fillers)
+
+            total_selected_duration = sum(content['duration'] for content in selected_content) if selected_content else 0
+            remaining_time = time_until_next_block - total_selected_duration
+
+            if selected_content:
+                for content in selected_content:
+                    playlist.append({
+                        "item": item_counter,
+                        "start_time": current_time.strftime("%H:%M:%S"),
+                        "name": content['name'],
+                        "duration": str(timedelta(seconds=content['duration'])),
+                        "type": "Promo" if content in promos else "Filler",
+                        "block": block_counter
+                    })
+                    item_counter += 1
+                    current_time += timedelta(seconds=content['duration'])
+                    elapsed_time += content['duration']
+
+            # Si todavía queda tiempo en el bloque y no se pudo llenar con promos o rellenos, agregar una tanda parcial
+            if remaining_time > 0:
+                playlist.append({
+                    "item": item_counter,
+                    "start_time": current_time.strftime("%H:%M:%S"),
+                    "name": "Tanda Parcial",
+                    "duration": str(timedelta(seconds=remaining_time)),
+                    "type": "Tanda",
+                    "block": block_counter
+                })
+                item_counter += 1
+                current_time += timedelta(seconds=remaining_time)
+                elapsed_time += remaining_time
+
+        
         if user_program_index < len(user_programs):
             program = user_programs[user_program_index]
             program_duration = parse_duration(program["duration"])
@@ -296,82 +313,30 @@ def generate_playlist(start_time, end_time, promos, fillers, user_programs):
             current_time += timedelta(seconds=program_duration)
             elapsed_time += program_duration
             user_program_index += 1
+            progress_bar.progress(min(elapsed_time / total_time, 1.0))
 
-            # Actualizar barra de progreso
-            progress = min(elapsed_time / total_time, 1.0)
-            progress_bar.progress(progress)
-            status_text.text(f"Generando playlist... {int(progress * 100)}% completado")
-        else:
-            break
-
-        # Agregar tanda de 60 segundos después del programa
-        tanda_duration = 60
-        playlist.append({
-            "item": item_counter,
-            "start_time": current_time.strftime("%H:%M:%S"),
-            "name": "Tanda 60 segundos",
-            "duration": str(timedelta(seconds=tanda_duration)),
-            "type": "Tanda",
-            "block": block_counter
-        })
-        item_counter += 1
-        current_time += timedelta(seconds=tanda_duration)
-        elapsed_time += tanda_duration
-
-        # Actualizar barra de progreso
-        progress = min(elapsed_time / total_time, 1.0)
-        progress_bar.progress(progress)
-        status_text.text(f"Generando playlist... {int(progress * 100)}% completado")
-
-        # Calcular tiempo restante en el bloque
-        time_to_next_block = calculate_time_to_next_block(current_time)
-        remaining_time = time_to_next_block.seconds
-
-        # Agregar promos y rellenos
-        if remaining_time > 0:
-            selected_content = select_content(remaining_time, promos + fillers)
-            for content in selected_content:
+            if tanda_count < max_tandas:
+                tanda_duration = 60
                 playlist.append({
                     "item": item_counter,
                     "start_time": current_time.strftime("%H:%M:%S"),
-                    "name": content['name'],
-                    "duration": str(timedelta(seconds=content['duration'])),
-                    "type": "Promo" if content in promos else "Filler",
-                    "block": block_counter
-                })
-                item_counter += 1
-                current_time += timedelta(seconds=content['duration'])
-                elapsed_time += content['duration']
-
-                # Actualizar barra de progreso
-                progress = min(elapsed_time / total_time, 1.0)
-                progress_bar.progress(progress)
-                status_text.text(f"Generando playlist... {int(progress * 100)}% completado")
-
-            if remaining_time > 0:
-                playlist.append({
-                    "item": item_counter,
-                    "start_time": current_time.strftime("%H:%M:%S"),
-                    "name": "Tanda Parcial",
-                    "duration": str(timedelta(seconds=remaining_time)),
+                    "name": "Tanda 60 segundos",
+                    "duration": str(timedelta(seconds=tanda_duration)),
                     "type": "Tanda",
                     "block": block_counter
                 })
                 item_counter += 1
-                current_time += timedelta(seconds=remaining_time)
-                elapsed_time += remaining_time
-
-                # Actualizar barra de progreso
-                progress = min(elapsed_time / total_time, 1.0)
-                progress_bar.progress(progress)
-                status_text.text(f"Generando playlist... {int(progress * 100)}% completado")
-
+                current_time += timedelta(seconds=tanda_duration)
+                elapsed_time += tanda_duration
+                tanda_count += 1
+                progress_bar.progress(min(elapsed_time / total_time, 1.0))
+        else:
+            break
+        
         block_counter += 1
 
-    # Finalizar barra de progreso
     progress_bar.progress(1.0)
     status_text.text("Playlist generada exitosamente 🎉")
-
     return playlist
 
 # Función para convertir duración en formato HH:MM:SS a segundos
@@ -381,26 +346,34 @@ def parse_duration(duration_str):
 
 # Función para calcular el tiempo hasta el siguiente bloque
 def calculate_time_to_next_block(current_time):
-    valid_start_minutes = [0, 10, 15, 20, 30, 40, 45, 50, 0]
-    current_minute = current_time.minute
-    next_minute = next((m for m in valid_start_minutes if m > current_minute), valid_start_minutes[0])
-    next_block_time = current_time.replace(minute=next_minute, second=0, microsecond=0)
-    if next_block_time <= current_time:
-        next_block_time += timedelta(hours=1)
-    return next_block_time - current_time
+    valid_start_minutes = [0, 10, 15, 20, 30, 40, 45, 50]
+    current_hour, current_minute = current_time.hour, current_time.minute
+    next_valid_minutes = [m for m in valid_start_minutes if m > current_minute]
+    
+    if next_valid_minutes:
+        next_minute = next_valid_minutes[0]
+    else:
+        next_minute = valid_start_minutes[0]
+        current_hour += 1  # Pasamos a la siguiente hora si no hay minutos válidos en la actual
+    
+    next_block_time = current_time.replace(hour=current_hour % 24, minute=next_minute, second=0, microsecond=0)
+    return next_block_time
+
 
 # Función para seleccionar contenido
 def select_content(duration_seconds, content_list):
-    random.shuffle(content_list)
     selected = []
     remaining_seconds = duration_seconds
-    content_list.sort(key=lambda x: x['duration'], reverse=True)
-    for content in content_list:
+    
+    sorted_content = sorted(content_list, key=lambda x: x['duration'], reverse=True)
+    
+    for content in sorted_content:
         if content['duration'] <= remaining_seconds:
             selected.append(content)
             remaining_seconds -= content['duration']
         if remaining_seconds <= 0:
             break
+    
     return selected
 
 # Interfaz de Streamlit
