@@ -537,18 +537,41 @@ def main():
     # Vista previa de playlist
     if st.session_state.playlist:
         st.markdown("### 📜 Vista Previa")
+        
+        # Convertir la playlist en un DataFrame
+        playlist_df = pd.DataFrame(st.session_state.playlist)
+        
+        # Definir colores para cada tipo de contenido
+        type_colors = {
+            'Program': 'background-color: #FFFF00;',  # Amarillo
+            'Tanda': 'background-color: #00FF00;',    # Verde
+            'Promo': 'background-color: #FFA500;',    # Naranja
+            'Filler': 'background-color: #808080;',   # Gris
+        }
+        
+        # Función para aplicar colores
+        def apply_colors(row):
+            color = type_colors.get(row['type'], '')  # Obtener el color según el tipo
+            return [color] * len(row)  # Aplicar el color a todas las celdas de la fila
+        
+        # Aplicar colores al DataFrame
+        styled_playlist = playlist_df.style.apply(apply_colors, axis=1)
+        
+        # Mostrar el DataFrame con colores
         st.dataframe(
-            st.session_state.playlist,
+            styled_playlist,
             column_config={
                 "item": "Ítem",
                 "start_time": {"label": "Hora Inicio", "help": "Hora de inicio del bloque"},
                 "name": "Contenido",
                 "duration": "Duración",
-                "type": {"label": "Tipo", "help": "Tipo de contenido (Programa, Tanda, etc.)"}
+                "type": {"label": "Tipo", "help": "Tipo de contenido (Programa, Tanda, etc.)"},
+                "block": "Bloque"
             },
             use_container_width=True,
             hide_index=True
         )
+        
         
         # Sección de Exportación
         st.markdown("---")
