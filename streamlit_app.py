@@ -16,27 +16,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --------------------------
-# 1. Configuración del Tema
-# --------------------------
-def setup_theme():
-    if 'theme' not in st.session_state:
-        st.session_state.theme = "light"  # Tema predeterminado
-
-    # Cambiar el tema según la selección del usuario
-    with st.sidebar:
-        st.markdown("---")
-        st.subheader("🎨 Configuración del Tema")
-        theme = st.radio(
-            "Selecciona el tema:",
-            ["Claro ☀️", "Oscuro 🌙"],
-            index=0 if st.session_state.theme == "light" else 1
-        )
-        if theme == "Oscuro 🌙":
-            st.session_state.theme = "dark"
-        else:
-            st.session_state.theme = "light"
-
 
 # --------------------------
 # 1. Sistema de Login Simple
@@ -47,7 +26,7 @@ def check_login():
         
     if not st.session_state.logged_in:
         with st.container():
-            col1, col2, col3 = st.columns([1,3,1])
+            col1, col2, col3 = st.columns([1, 3, 1])
             with col2:
                 st.title("🔐 Acceso")
                 user = st.text_input("Usuario")
@@ -56,11 +35,27 @@ def check_login():
                 if st.button("Ingresar", use_container_width=True):
                     if user == "admin" and password == "admin123":
                         st.session_state.logged_in = True
-                        st.rerun()  # Usar st.rerun() en lugar de st.experimental_rerun()
+                        st.session_state.mode = None  # Inicializar el modo
+                        st.rerun()  # Recargar la aplicación
                     else:
                         st.error("Credenciales incorrectas")
         st.stop()  # Detener la ejecución si no se ha iniciado sesión
 
+    # Selección de modos después del login
+    if st.session_state.logged_in and 'mode' not in st.session_state:
+        with st.container():
+            col1, col2, col3 = st.columns([1, 3, 1])
+            with col2:
+                st.title("🎛️ Selecciona el Modo")
+                mode = st.radio(
+                    "Elige el modo de interfaz:",
+                    ["Modo Simple", "Modo Completo"],
+                    index=0  # Por defecto, Modo Simple
+                )
+                if st.button("Continuar", use_container_width=True):
+                    st.session_state.mode = mode
+                    st.rerun()  # Recargar la aplicación para aplicar el modo
+        st.stop()  # Detener la ejecución hasta que se seleccione un modo
 
 # Función para autenticar Google Sheets usando Streamlit Secrets
 def authenticate_google_sheets():
@@ -202,9 +197,9 @@ def export_to_google_sheets(playlist, sheet_title):
 
         # Definir colores para cada tipo
         type_colors = {
-            'Program': {'red': 0.8, 'green': 0.8, 'blue': 0.2},  # Amarillo
-            'Tanda': {'red': 0.2, 'green': 0.8, 'blue': 0.2},    # Verde
-            'Promo': {'red': 0.9, 'green': 0.6, 'blue': 0.1},    # Naranja
+            'Program': {'red': 1.0, 'green': 1.0, 'blue': 1.0},  # Blanco
+            'Tanda': {'red': 0.0, 'green': 1.0, 'blue': 0.0},    # Verde
+            'Promo': {'red': 0.27, 'green': 0.74, 'blue': 0.78}, # Turquesa (#46bdc6)
             'Filler': {'red': 0.5, 'green': 0.5, 'blue': 0.5},   # Gris
         }
 
@@ -241,6 +236,8 @@ def export_to_google_sheets(playlist, sheet_title):
             'textFormat': {'bold': True, 'foregroundColor': {'red': 1.0, 'green': 1.0, 'blue': 1.0}}  # Blanco
         })
 
+
+
         st.session_state.messages.append({"type": "success", "content": f"Playlist exportada correctamente a Google Sheets: {spreadsheet.url} -> {sheet_title}"})
     except Exception as e:
         st.session_state.messages.append({"type": "error", "content": f"Error al exportar a Google Sheets: {e}"})
@@ -264,6 +261,10 @@ def find_exact_combination(target_duration, content_list):
     return dp.get(target_duration, None)
 
 def generate_playlist(start_time, end_time, promos, fillers, user_programs):
+    # Verificar si hay al menos 2 promos disponibles
+    if len(promos) < 2:
+        st.warning("⚠️ Advertencia: No hay suficientes promos disponibles. Se intentará compensar con rellenos.")
+    
     current_time = start_time
     playlist = []
     block_counter = 0  # Iniciar con bloque 0
@@ -271,6 +272,7 @@ def generate_playlist(start_time, end_time, promos, fillers, user_programs):
     item_counter = 1
     tanda_count = 0  # Contador de tandas por bloque
     max_tandas_per_block = 2  # Límite de tandas por bloque
+    promo_count = 0  # Contador de promos en la playlist
     
     total_time = (end_time - start_time).total_seconds()
     elapsed_time = 0
@@ -334,34 +336,38 @@ def generate_playlist(start_time, end_time, promos, fillers, user_programs):
         else:
             break
 
-        # Llenar el tiempo restante del bloque con promos/rellenos o tandas parciales
+        # Llenar el tiempo restante del bloque con promos/rellenos
         next_block_time = calculate_time_to_next_block(current_time)
         time_until_next_block = (next_block_time - current_time).total_seconds()
 
         if time_until_next_block > 0:
-            # Priorizar promos sobre rellenos
-            available_content = promos + fillers  # Promos primero
-            exact_combination = find_exact_combination(time_until_next_block, available_content)
-            
-            if exact_combination:
-                # Usar la combinación exacta
-                for content in exact_combination:
-                    playlist.append({
-                        "item": item_counter,
-                        "start_time": current_time.strftime("%H:%M:%S"),
-                        "name": content['name'],
-                        "duration": str(timedelta(seconds=content['duration'])),
-                        "type": "Promo" if content in promos else "Filler",
-                        "block": block_counter
-                    })
-                    item_counter += 1
-                    current_time += timedelta(seconds=content['duration'])
-                    elapsed_time += content['duration']
+            # Priorizar promos si no se han alcanzado las 2 promos mínimas
+            if promo_count < 2 and promos:
+                # Intentar usar promos primero
+                exact_combination = find_exact_combination(time_until_next_block, promos)
+                if exact_combination:
+                    for content in exact_combination:
+                        playlist.append({
+                            "item": item_counter,
+                            "start_time": current_time.strftime("%H:%M:%S"),
+                            "name": content['name'],
+                            "duration": str(timedelta(seconds=content['duration'])),
+                            "type": "Promo",
+                            "block": block_counter
+                        })
+                        item_counter += 1
+                        current_time += timedelta(seconds=content['duration'])
+                        elapsed_time += content['duration']
+                        promo_count += 1
+                else:
+                    st.error("❌ Error: No hay suficientes promos para llenar el bloque perfectamente.")
+                    return None
             else:
-                # Si no hay combinación exacta, intentar llenar con promos/rellenos sin ser exactos
-                selected_content = select_content(time_until_next_block, available_content)
-                if selected_content:
-                    for content in selected_content:
+                # Usar promos y rellenos
+                available_content = promos + fillers
+                exact_combination = find_exact_combination(time_until_next_block, available_content)
+                if exact_combination:
+                    for content in exact_combination:
                         playlist.append({
                             "item": item_counter,
                             "start_time": current_time.strftime("%H:%M:%S"),
@@ -373,33 +379,23 @@ def generate_playlist(start_time, end_time, promos, fillers, user_programs):
                         item_counter += 1
                         current_time += timedelta(seconds=content['duration'])
                         elapsed_time += content['duration']
-                    remaining_time = time_until_next_block - sum(c['duration'] for c in selected_content)
+                        if content in promos:
+                            promo_count += 1
                 else:
-                    remaining_time = time_until_next_block
-
-                # Si todavía queda tiempo, usar tanda parcial (última opción)
-                if remaining_time > 0:
-                    tanda_duration = min(30, remaining_time)  # Máximo 30 segundos
-                    playlist.append({
-                        "item": item_counter,
-                        "start_time": current_time.strftime("%H:%M:%S"),
-                        "name": f"Tanda Parcial de {tanda_duration}s",
-                        "duration": str(timedelta(seconds=tanda_duration)),
-                        "type": "Tanda",
-                        "block": block_counter
-                    })
-                    item_counter += 1
-                    current_time += timedelta(seconds=tanda_duration)
-                    elapsed_time += tanda_duration
+                    st.error("❌ Error: No hay suficiente contenido para llenar el bloque perfectamente.")
+                    return None
 
         # Reiniciar el contador de tandas al final de cada bloque
         tanda_count = 0
         block_counter += 1
 
+    # Verificar si se alcanzó el mínimo de 2 promos
+    if promo_count < 2:
+        st.warning("⚠️ Advertencia: No se pudieron incluir al menos 2 promos en la playlist.")
+
     progress_bar.progress(1.0)
     status_text.text("Playlist generada exitosamente 🎉")
     return playlist
-
 
 # Función para convertir duración en formato HH:MM:SS a segundos
 def parse_duration(duration_str):
@@ -440,10 +436,7 @@ def select_content(duration_seconds, content_list):
 
 # Interfaz de Streamlit
 def main():
-    # Configurar el tema
-    setup_theme()
-
-    # Verificar el login
+    # Verificar el login y la selección de modos
     check_login()
     
     # Inicializar estados
@@ -457,13 +450,64 @@ def main():
         st.session_state.programs = []
 
     # ------------------------------------------------------
-    # Barra Lateral (Todo el contenido del sidebar aquí)
+    # Selector de modo en la barra lateral
     # ------------------------------------------------------
     with st.sidebar:
-        # Sección de Mensajes Importantes (Parte superior)
-        st.header("📢 Notificaciones")
-        messages_container = st.container(height=200)
-        with messages_container:
+        st.header("🎛️ Modo de Interfaz")
+        new_mode = st.radio(
+            "Selecciona el modo:",
+            ["Modo Simple", "Modo Completo"],
+            index=0 if st.session_state.mode == "Modo Simple" else 1
+        )
+        if new_mode != st.session_state.mode:
+            st.session_state.mode = new_mode
+            st.rerun()  # Recargar la aplicación para aplicar el nuevo modo
+
+    # ------------------------------------------------------
+    # Modo Simple (Para móviles)
+    # ------------------------------------------------------
+    if st.session_state.mode == "Modo Simple":
+        st.title("🎧 Modo Simple")
+        st.markdown("---")
+
+        # Selector de hoja de rellenos
+        sheets = list_sheets()
+        selected_sheet = st.selectbox(
+            "📂 Seleccionar hoja de rellenos:", 
+            sheets if sheets else ["No disponible"],
+            disabled=not sheets
+        )
+
+        # Botón para generar la playlist
+        if st.button("✨ Generar Playlist", type="primary", use_container_width=True):
+            # Cargar datos antes de generar la playlist
+            with st.spinner("🔍 Cargando programas, promos y rellenos..."):
+                promos = load_promos_from_google_sheet()
+                user_programs = load_programs_from_google_sheet()
+                fillers = load_fillers_from_google_sheet(selected_sheet) if sheets else []
+
+                # Verificar si hay datos suficientes
+                if not user_programs or not promos or not fillers:
+                    st.session_state.messages.append({"type": "warning", "content": "Faltan datos para generar la playlist"})
+                else:
+                    # Usar horarios predeterminados en modo simple
+                    start_time = datetime.strptime("05:59:00", "%H:%M:%S").time()
+                    end_time = datetime.strptime("23:59:00", "%H:%M:%S").time()
+                    start_time_dt = datetime.combine(datetime.today(), start_time)
+                    end_time_dt = datetime.combine(datetime.today(), end_time)
+
+                    # Generar playlist
+                    playlist = generate_playlist(start_time_dt, end_time_dt, promos, fillers, user_programs)
+                    st.session_state.playlist = playlist
+                    st.session_state.messages.append({"type": "success", "content": "Playlist generada correctamente"})
+
+                    # Exportar automáticamente a Google Sheets
+                    export_to_google_sheets(st.session_state.playlist, st.session_state.sheet_title)
+                    st.session_state.messages.append({"type": "success", "content": "Playlist exportada a Google Sheets"})
+
+        # Mostrar mensajes de notificación
+        if st.session_state.messages:
+            st.markdown("### 📢 Notificaciones")
             for msg in st.session_state.messages[-3:]:  # Mostrar últimos 3 mensajes
                 if msg["type"] == "success":
                     st.success(msg["content"], icon="✅")
@@ -472,113 +516,108 @@ def main():
                 elif msg["type"] == "warning":
                     st.warning(msg["content"], icon="⚠️")
 
-        st.markdown("---")
-        
-        # Sección Principal de Configuración
-        st.header("⚙️ Configuración Principal")
-        
-        # Selector de hoja de rellenos
-        sheets = list_sheets()
-        selected_sheet = st.selectbox(
-            "📂 Seleccionar hoja de rellenos:", 
-            sheets if sheets else ["No disponible"],
-            disabled=not sheets
-        )
-        
-        st.markdown("---")
-        
-       
-
-        # Mostrar la lista de programas en una tabla
-        st.markdown("---")
-        st.subheader("📋 Lista de Programas")
-        if st.session_state.programs:
-            # Convertir la lista de programas en un DataFrame
-            programs_df = pd.DataFrame(st.session_state.programs)
-            # Mostrar la tabla en el sidebar
-            st.dataframe(programs_df, use_container_width=True, hide_index=True)
-        else:
-            st.write("No hay programas cargados.")
-        
-
-         # Sección de Horarios (Configuración menos importante)
-        st.subheader("⏰ Configuración de Horarios")
-        start_time = st.time_input("Hora de inicio", value=datetime.strptime("05:59:00", "%H:%M:%S").time())
-        end_time = st.time_input("Hora de fin", value=datetime.strptime("23:59:00", "%H:%M:%S").time())
-
     # ------------------------------------------------------
-    # Cuerpo Principal de la Aplicación
+    # Modo Completo (Para escritorio)
     # ------------------------------------------------------
-    st.title("VJD")
-    st.markdown("---")
+    else:
+        st.title("🎧 Modo Completo")
+        st.markdown("---")
 
-    # Cargar datos
-    with st.spinner("🔍 Cargando programas, promos y rellenos..."): 
-        promos = load_promos_from_google_sheet()
-        user_programs = load_programs_from_google_sheet()
-        fillers = load_fillers_from_google_sheet(selected_sheet) if sheets else []
+        # Crear 3 columnas
+        col1, col2, col3 = st.columns([1, 2, 1])
 
-        # Actualizar la lista de programas en el estado de la sesión
-        st.session_state.programs = user_programs
+        # ------------------------------------------------------
+        # Columna 1: Configuración y controles principales
+        # ------------------------------------------------------
+        with col1:
+            st.header("⚙️ Configuración")
+            
+            # Selector de hoja de rellenos
+            sheets = list_sheets()
+            selected_sheet = st.selectbox(
+                "📂 Seleccionar hoja de rellenos:", 
+                sheets if sheets else ["No disponible"],
+                disabled=not sheets
+            )
+            
+            st.markdown("---")
+            
+            # Configuración de horarios
+            st.subheader("⏰ Horarios")
+            start_time = st.time_input("Hora de inicio", value=datetime.strptime("05:59:00", "%H:%M:%S").time())
+            end_time = st.time_input("Hora de fin", value=datetime.strptime("23:59:00", "%H:%M:%S").time())
+            
+            st.markdown("---")
+            
+            # Botón para generar la playlist
+            if st.button("✨ Generar Playlist", type="primary", use_container_width=True):
+                # Cargar datos antes de generar la playlist
+                with st.spinner("🔍 Cargando programas, promos y rellenos..."):
+                    promos = load_promos_from_google_sheet()
+                    user_programs = load_programs_from_google_sheet()
+                    fillers = load_fillers_from_google_sheet(selected_sheet) if sheets else []
 
-    # Generar playlist
-    col1, col2 = st.columns([1,3])
-    with col1:
-        if st.button("Generar", type="primary", help="Genera una nueva playlist basada en los parámetros actuales"):
-            if not user_programs or not promos or not fillers:
-                st.session_state.messages.append({"type": "warning", "content": "Faltan datos para generar la playlist"})
+                    # Verificar si hay datos suficientes
+                    if not user_programs or not promos or not fillers:
+                        st.session_state.messages.append({"type": "warning", "content": "Faltan datos para generar la playlist"})
+                    else:
+                        start_time_dt = datetime.combine(datetime.today(), start_time)
+                        end_time_dt = datetime.combine(datetime.today(), end_time)
+                        playlist = generate_playlist(start_time_dt, end_time_dt, promos, fillers, user_programs)
+                        st.session_state.playlist = playlist
+                        st.session_state.messages.append({"type": "success", "content": "Playlist generada correctamente"})
+
+        # ------------------------------------------------------
+        # Columna 2: Vista previa de la playlist
+        # ------------------------------------------------------
+        with col2:
+            st.header("📜 Vista Previa de la Playlist")
+            
+            if st.session_state.playlist:
+                # Convertir la playlist en un DataFrame
+                playlist_df = pd.DataFrame(st.session_state.playlist)
+                
+                # Definir colores para cada tipo de contenido
+                type_colors = {
+                    'Program': 'background-color: #FFFFFF; color: #000000;',  # Blanco
+                    'Tanda': 'background-color: #00FF00; color: #000000;',    # Verde
+                    'Promo': 'background-color: #46bdc6; color: #000000;',    # Turquesa
+                    'Filler': 'background-color: #808080; color: #FFFFFF;',   # Gris
+                }
+                
+                # Función para aplicar colores
+                def apply_colors(row):
+                    color = type_colors.get(row['type'], '')  # Obtener el color según el tipo
+                    return [color] * len(row)  # Aplicar el color a todas las celdas de la fila
+                
+                # Aplicar colores al DataFrame
+                styled_playlist = playlist_df.style.apply(apply_colors, axis=1)
+                
+                # Mostrar el DataFrame con colores
+                st.dataframe(
+                    styled_playlist,
+                    column_config={
+                        "item": "Ítem",
+                        "start_time": {"label": "Hora Inicio", "help": "Hora de inicio del bloque"},
+                        "name": "Contenido",
+                        "duration": "Duración",
+                        "type": {"label": "Tipo", "help": "Tipo de contenido (Programa, Tanda, etc.)"},
+                        "block": "Bloque"
+                    },
+                    use_container_width=True,
+                    hide_index=True,
+                    height=600  # Altura fija para la tabla
+                )
             else:
-                start_time_dt = datetime.combine(datetime.today(), start_time)
-                end_time_dt = datetime.combine(datetime.today(), end_time)
-                playlist = generate_playlist(start_time_dt, end_time_dt, promos, fillers, user_programs)
-                st.session_state.playlist = playlist
-                st.session_state.messages.append({"type": "success", "content": "Playlist generada correctamente"})
+                st.info("No hay playlist generada. Configura los parámetros y haz clic en 'Generar Playlist'.")
 
-    # Vista previa de playlist
-    if st.session_state.playlist:
-        st.markdown("### 📜 Vista Previa")
-        
-        # Convertir la playlist en un DataFrame
-        playlist_df = pd.DataFrame(st.session_state.playlist)
-        
-        # Definir colores para cada tipo de contenido
-        type_colors = {
-            'Program': 'background-color: #FFFF00;',  # Amarillo
-            'Tanda': 'background-color: #00FF00;',    # Verde
-            'Promo': 'background-color: #FFA500;',    # Naranja
-            'Filler': 'background-color: #808080;',   # Gris
-        }
-        
-        # Función para aplicar colores
-        def apply_colors(row):
-            color = type_colors.get(row['type'], '')  # Obtener el color según el tipo
-            return [color] * len(row)  # Aplicar el color a todas las celdas de la fila
-        
-        # Aplicar colores al DataFrame
-        styled_playlist = playlist_df.style.apply(apply_colors, axis=1)
-        
-        # Mostrar el DataFrame con colores
-        st.dataframe(
-            styled_playlist,
-            column_config={
-                "item": "Ítem",
-                "start_time": {"label": "Hora Inicio", "help": "Hora de inicio del bloque"},
-                "name": "Contenido",
-                "duration": "Duración",
-                "type": {"label": "Tipo", "help": "Tipo de contenido (Programa, Tanda, etc.)"},
-                "block": "Bloque"
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        
-        # Sección de Exportación
-        st.markdown("---")
-        st.markdown("### 📤 Exportar Playlist")
-        
-        col_export1, col_export2 = st.columns(2)
-        with col_export1:
+        # ------------------------------------------------------
+        # Columna 3: Exportación y detalles adicionales
+        # ------------------------------------------------------
+        with col3:
+            st.header("📤 Exportar Playlist")
+            
+            # Nombre de la hoja
             new_sheet_name = st.text_input(
                 "📝 Nombre para la hoja:",
                 value=st.session_state.sheet_title,
@@ -586,8 +625,7 @@ def main():
             )
             st.session_state.sheet_title = new_sheet_name
             
-        with col_export2:
-            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)  # Espaciado
+            # Botones de exportación
             if st.button("💾 Exportar a Google Sheets", use_container_width=True):
                 if st.session_state.playlist:
                     export_to_google_sheets(st.session_state.playlist, st.session_state.sheet_title)
@@ -599,6 +637,20 @@ def main():
                     export_to_excel(st.session_state.playlist)
                 else:
                     st.session_state.messages.append({"type": "error", "content": "No hay playlist para exportar"})
+            
+            st.markdown("---")
+            
+            # Mensajes de notificación
+            st.header("📢 Notificaciones")
+            messages_container = st.container(height=200)
+            with messages_container:
+                for msg in st.session_state.messages[-3:]:  # Mostrar últimos 3 mensajes
+                    if msg["type"] == "success":
+                        st.success(msg["content"], icon="✅")
+                    elif msg["type"] == "error":
+                        st.error(msg["content"], icon="❌")
+                    elif msg["type"] == "warning":
+                        st.warning(msg["content"], icon="⚠️")
 
 if __name__ == "__main__":
     main()
