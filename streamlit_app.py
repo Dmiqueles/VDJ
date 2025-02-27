@@ -336,7 +336,7 @@ def generate_playlist(start_time, end_time, promos, fillers, user_programs):
         else:
             break
 
-        # Llenar el tiempo restante del bloque con promos/rellenos o tandas parciales
+        # Llenar el tiempo restante del bloque con promos/rellenos
         next_block_time = calculate_time_to_next_block(current_time)
         time_until_next_block = (next_block_time - current_time).total_seconds()
 
@@ -344,9 +344,9 @@ def generate_playlist(start_time, end_time, promos, fillers, user_programs):
             # Priorizar promos si no se han alcanzado las 2 promos mínimas
             if promo_count < 2 and promos:
                 # Intentar usar promos primero
-                selected_content = select_content(time_until_next_block, promos)
-                if selected_content:
-                    for content in selected_content:
+                exact_combination = find_exact_combination(time_until_next_block, promos)
+                if exact_combination:
+                    for content in exact_combination:
                         playlist.append({
                             "item": item_counter,
                             "start_time": current_time.strftime("%H:%M:%S"),
@@ -359,15 +359,15 @@ def generate_playlist(start_time, end_time, promos, fillers, user_programs):
                         current_time += timedelta(seconds=content['duration'])
                         elapsed_time += content['duration']
                         promo_count += 1
-                    remaining_time = time_until_next_block - sum(c['duration'] for c in selected_content)
                 else:
-                    remaining_time = time_until_next_block
+                    st.error("❌ Error: No hay suficientes promos para llenar el bloque perfectamente.")
+                    return None
             else:
                 # Usar promos y rellenos
                 available_content = promos + fillers
-                selected_content = select_content(time_until_next_block, available_content)
-                if selected_content:
-                    for content in selected_content:
+                exact_combination = find_exact_combination(time_until_next_block, available_content)
+                if exact_combination:
+                    for content in exact_combination:
                         playlist.append({
                             "item": item_counter,
                             "start_time": current_time.strftime("%H:%M:%S"),
@@ -381,24 +381,9 @@ def generate_playlist(start_time, end_time, promos, fillers, user_programs):
                         elapsed_time += content['duration']
                         if content in promos:
                             promo_count += 1
-                    remaining_time = time_until_next_block - sum(c['duration'] for c in selected_content)
                 else:
-                    remaining_time = time_until_next_block
-
-            # Si todavía queda tiempo, usar tanda parcial (última opción)
-            if remaining_time > 0:
-                tanda_duration = min(30, remaining_time)  # Máximo 30 segundos
-                playlist.append({
-                    "item": item_counter,
-                    "start_time": current_time.strftime("%H:%M:%S"),
-                    "name": f"Tanda Parcial de {tanda_duration}s",
-                    "duration": str(timedelta(seconds=tanda_duration)),
-                    "type": "Tanda",
-                    "block": block_counter
-                })
-                item_counter += 1
-                current_time += timedelta(seconds=tanda_duration)
-                elapsed_time += tanda_duration
+                    st.error("❌ Error: No hay suficiente contenido para llenar el bloque perfectamente.")
+                    return None
 
         # Reiniciar el contador de tandas al final de cada bloque
         tanda_count = 0
