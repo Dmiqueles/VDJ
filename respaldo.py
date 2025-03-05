@@ -1,11 +1,12 @@
 import streamlit as st
 import gspread
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from oauth2client.service_account import ServiceAccountCredentials
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
+import random
 import pandas as pd
-import itertools
+
 
 # Configuración inicial de la página (debe ser la primera llamada)
 st.set_page_config(
@@ -14,6 +15,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
 
 # --------------------------
 # 1. Sistema de Login Simple
@@ -71,6 +73,7 @@ def authenticate_google_sheets():
     except Exception as e:
         st.error(f"Error al autenticar Google Sheets: {e}")
         return None
+
 
 # Función para cargar programas desde Google Sheets
 def load_programs_from_google_sheet():
@@ -198,7 +201,6 @@ def export_to_google_sheets(playlist, sheet_title):
             'Tanda': {'red': 0.0, 'green': 1.0, 'blue': 0.0},    # Verde
             'Promo': {'red': 0.27, 'green': 0.74, 'blue': 0.78}, # Turquesa (#46bdc6)
             'Filler': {'red': 0.5, 'green': 0.5, 'blue': 0.5},   # Gris
-            'Tanda Parcial': {'red': 1.0, 'green': 1.0, 'blue': 0.0},  # Amarillo (#FFFF00)
         }
 
         # Crear las filas de datos
@@ -217,7 +219,7 @@ def export_to_google_sheets(playlist, sheet_title):
             formats.append({
                 "range": row_range,
                 "format": {
-                    "backgroundColor": type_colors.get(block['type']),  # Usar el color correspondiente
+                    "backgroundColor": type_colors.get(block['type'], {'red': 1, 'green': 1, 'blue': 1}),
                     "textFormat": {"bold": block['type'] in ['Program', 'Tanda']}
                 }
             })
@@ -234,192 +236,162 @@ def export_to_google_sheets(playlist, sheet_title):
             'textFormat': {'bold': True, 'foregroundColor': {'red': 1.0, 'green': 1.0, 'blue': 1.0}}  # Blanco
         })
 
+
+
         st.session_state.messages.append({"type": "success", "content": f"Playlist exportada correctamente a Google Sheets: {spreadsheet.url} -> {sheet_title}"})
     except Exception as e:
         st.session_state.messages.append({"type": "error", "content": f"Error al exportar a Google Sheets: {e}"})
 
-def find_exact_combination(target, content_list):
-    # Versión optimizada para grandes volúmenes
+def find_exact_combination(target_duration, content_list):
+    # Filtrar contenido más largo que el tiempo disponible
+    valid_content = [c for c in content_list if c['duration'] <= target_duration]
+    
+    # Usar programación dinámica para encontrar combinaciones exactas
     dp = {0: []}
-    for content in sorted(content_list, key=lambda x: -x['duration']):
+    for content in sorted(valid_content, key=lambda x: -x['duration']):
+        current_duration = content['duration']
         for s in list(dp.keys()):
-            new_sum = s + content['duration']
-            if new_sum <= target:
-                if new_sum not in dp or len(dp[new_sum]) > len(dp[s]) + 1:
-                    dp[new_sum] = dp[s] + [content]
-    return dp.get(target, None)
-
-from datetime import datetime, date, timedelta
+            new_sum = s + current_duration
+            if new_sum > target_duration:
+                continue
+            if new_sum not in dp or len(dp[new_sum]) > len(dp[s]) + 1:
+                dp[new_sum] = dp[s] + [content]
+            if new_sum == target_duration:
+                return dp[new_sum]
+    return dp.get(target_duration, None)
 
 def generate_playlist(start_time, end_time, promos, fillers, user_programs):
-    def format_duration(s):
-        return f"{s//3600:02d}:{(s//60)%60:02d}:{s%60:02d}"
+    # Verificar si hay al menos 2 promos disponibles
+    if len(promos) < 2:
+        st.warning("⚠️ Advertencia: No hay suficientes promos disponibles. Se intentará compensar con rellenos.")
     
-    # Manejo correcto de fechas
-    start_date = date.today()
-    start_datetime = datetime.combine(start_date, start_time)
-    end_datetime = datetime.combine(start_date, end_time)
-    
-    current_time = start_datetime
+    current_time = start_time
     playlist = []
+    block_counter = 0  # Iniciar con bloque 0
+    user_program_index = 0
     item_counter = 1
-    block_counter = 0
+    tanda_count = 0  # Contador de tandas por bloque
+    max_tandas_per_block = 2  # Límite de tandas por bloque
+    promo_count = 0  # Contador de promos en la playlist
+    
+    total_time = (end_time - start_time).total_seconds()
+    elapsed_time = 0
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-    while current_time < end_datetime and user_programs:
-        block_counter += 1
-        program = user_programs.pop(0)
-        program_duration = parse_duration(program['duration'])
-        
-        # Agregar programa
-        playlist.append({
-            "item": item_counter,
-            "start_time": current_time.strftime("%H:%M:%S"),
-            "name": program['name'],
-            "duration": format_duration(program_duration),
-            "type": "Program",
-            "block": block_counter
-        })
-        item_counter += 1
-        current_time += timedelta(seconds=program_duration)
-        
-        # Lógica de llenado mejorada
-        remaining_block_time = (calculate_time_to_next_block(current_time) - current_time).total_seconds()
-        
-        # Primero intentar con promos/rellenos
-        combination = find_optimal_combination(remaining_block_time, promos + fillers)
-        
-        if combination:
-            for content in combination:
-                content_type = 'Promo' if content in promos else 'Filler'
+    # 1. Añadir una tanda de 60 segundos como primer ítem (bloque 0)
+    tanda_duration = 60
+    playlist.append({
+        "item": item_counter,
+        "start_time": current_time.strftime("%H:%M:%S"),
+        "name": "Tanda 60 segundos",
+        "duration": str(timedelta(seconds=tanda_duration)),
+        "type": "Tanda",
+        "block": block_counter  # Bloque 0
+    })
+    item_counter += 1
+    current_time += timedelta(seconds=tanda_duration)
+    elapsed_time += tanda_duration
+    tanda_count += 1
+    progress_bar.progress(min(elapsed_time / total_time, 1.0))
+
+    # 2. Incrementar el bloque después del primer ítem
+    block_counter += 1
+
+    # 3. Continuar con el resto de la lógica
+    while current_time < end_time:
+        # Añadir programa al inicio de cada bloque
+        if user_program_index < len(user_programs):
+            program = user_programs[user_program_index]
+            program_duration = parse_duration(program["duration"])
+            playlist.append({
+                "item": item_counter,
+                "start_time": current_time.strftime("%H:%M:%S"),
+                "name": program["name"],
+                "duration": program["duration"],
+                "type": "Program",
+                "block": block_counter
+            })
+            item_counter += 1
+            current_time += timedelta(seconds=program_duration)
+            elapsed_time += program_duration
+            user_program_index += 1
+            progress_bar.progress(min(elapsed_time / total_time, 1.0))
+
+            # Añadir tanda de 60 segundos después de cada programa (si cabe y no se ha alcanzado el límite)
+            if tanda_count < max_tandas_per_block and (end_time - current_time).total_seconds() >= tanda_duration:
                 playlist.append({
                     "item": item_counter,
                     "start_time": current_time.strftime("%H:%M:%S"),
-                    "name": content['name'],
-                    "duration": format_duration(content['duration']),
-                    "type": content_type,
-                    "block": block_counter
-                })
-                item_counter += 1
-                current_time += timedelta(seconds=content['duration'])
-                remaining_block_time -= content['duration']
-        
-        # Usar tandas solo si queda tiempo y es necesario
-        if remaining_block_time >= 60:
-            tanda_count = min(int(remaining_block_time // 60), 3)
-            for _ in range(tanda_count):
-                playlist.append({
-                    "item": item_counter,
-                    "start_time": current_time.strftime("%H:%M:%S"),
-                    "name": "Tanda 60s",
-                    "duration": "00:01:00",
+                    "name": "Tanda 60 segundos",
+                    "duration": str(timedelta(seconds=tanda_duration)),
                     "type": "Tanda",
                     "block": block_counter
                 })
                 item_counter += 1
-                current_time += timedelta(seconds=60)
-                remaining_block_time -= 60
-        
-        # Tanda parcial residual
-        if remaining_block_time > 0:
-            playlist.append({
-                "item": item_counter,
-                "start_time": current_time.strftime("%H:%M:%S"),
-                "name": f"Tanda Parcial ({int(remaining_block_time)}s)",
-                "duration": format_duration(remaining_block_time),
-                "type": "Tanda Parcial",
-                "block": block_counter
-            })
-            item_counter += 1
-            current_time += timedelta(seconds=remaining_block_time)
-    
+                current_time += timedelta(seconds=tanda_duration)
+                elapsed_time += tanda_duration
+                tanda_count += 1
+                progress_bar.progress(min(elapsed_time / total_time, 1.0))
+        else:
+            break
+
+        # Llenar el tiempo restante del bloque con promos/rellenos
+        next_block_time = calculate_time_to_next_block(current_time)
+        time_until_next_block = (next_block_time - current_time).total_seconds()
+
+        if time_until_next_block > 0:
+            # Intentar llenar con promos y rellenos
+            available_content = promos + fillers
+            exact_combination = find_exact_combination(time_until_next_block, available_content)
+            
+            if exact_combination:
+                for content in exact_combination:
+                    playlist.append({
+                        "item": item_counter,
+                        "start_time": current_time.strftime("%H:%M:%S"),
+                        "name": content['name'],
+                        "duration": str(timedelta(seconds=content['duration'])),
+                        "type": "Promo" if content in promos else "Filler",
+                        "block": block_counter
+                    })
+                    item_counter += 1
+                    current_time += timedelta(seconds=content['duration'])
+                    elapsed_time += content['duration']
+                    if content in promos:
+                        promo_count += 1
+            else:
+                # Si no hay suficiente contenido, agregar una tanda parcial
+                tanda_parcial_duration = time_until_next_block
+                playlist.append({
+                    "item": item_counter,
+                    "start_time": current_time.strftime("%H:%M:%S"),
+                    "name": f"Tanda Parcial ({tanda_parcial_duration} segundos)",
+                    "duration": str(timedelta(seconds=tanda_parcial_duration)),
+                    "type": "Tanda Parcial",
+                    "block": block_counter
+                })
+                item_counter += 1
+                current_time += timedelta(seconds=tanda_parcial_duration)
+                elapsed_time += tanda_parcial_duration
+                st.warning(f"⚠️ Se agregó una tanda parcial de {tanda_parcial_duration} segundos para completar el bloque.")
+
+        # Reiniciar el contador de tandas al final de cada bloque
+        tanda_count = 0
+        block_counter += 1
+
+    # Verificar si se alcanzó el mínimo de 2 promos
+    if promo_count < 2:
+        st.warning("⚠️ Advertencia: No se pudieron incluir al menos 2 promos en la playlist.")
+
+    progress_bar.progress(1.0)
+    status_text.text("Playlist generada exitosamente 🎉")
     return playlist
 
-def find_optimal_combination(time_available, content_pool, max_tandas=3):
-    best_combination = []
-    best_score = -1
-    
-    for r in range(1, 4):  # Probar combinaciones de 1 a 3 elementos
-        for combo in itertools.combinations(content_pool, r):
-            total_time = sum(c['duration'] for c in combo)
-            tanda_count = sum(1 for c in combo if c['duration'] == 60)
-            
-            if total_time > time_available:
-                continue
-            if tanda_count > max_tandas:
-                continue
-                
-            score = total_time * 10 - tanda_count * 1000
-            if score > best_score:
-                best_score = score
-                best_combination = combo
-                
-    return best_combination if best_score > -1 else None
-
-
-# Función auxiliar nueva para combinaciones balanceadas
-def find_balanced_combination(time_available, promos, fillers):
-    from itertools import permutations
-    
-    # Combinaciones posibles de 2 elementos (1 promo + 1 filler)
-    for combo in permutations(promos + fillers, 2):
-        total = sum(c['duration'] for c in combo)
-        if total == time_available:
-            return [{'name': c['name'], 'duration': c['duration'], 'type': 'Promo' if c in promos else 'Filler'} for c in combo]
-    
-    # Combinaciones de 3 elementos (2 promos + 1 filler)
-    for combo in permutations(promos + fillers, 3):
-        types = ['Promo' if c in promos else 'Filler' for c in combo]
-        if types.count('Promo') == 2 and types.count('Filler') == 1:
-            total = sum(c['duration'] for c in combo)
-            if total == time_available:
-                return [{'name': c['name'], 'duration': c['duration'], 'type': 'Promo' if c in promos else 'Filler'} for c in combo]
-    
-    # Si no hay combinaciones balanceadas, buscar cualquier combinación exacta
-    all_content = sorted(promos + fillers, key=lambda x: -x['duration'])
-    return find_exact_combination(time_available, all_content)
-
-
-# Función auxiliar nueva para aproximaciones
-def find_best_approximation(target, content_list):
-    best_combination = []
-    best_diff = float('inf')
-    
-    # Ordenar contenido de mayor a menor duración
-    sorted_content = sorted(content_list, key=lambda x: -x['duration'])
-    
-    for content in sorted_content:
-        if content['duration'] > target:
-            continue
-        current_sum = content['duration']
-        current_comb = [content]
-        
-        for item in sorted_content:
-            if item == content:
-                continue
-            if current_sum + item['duration'] <= target:
-                current_sum += item['duration']
-                current_comb.append(item)
-                
-        diff = target - current_sum
-        if diff < best_diff:
-            best_diff = diff
-            best_combination = current_comb
-            
-    return best_combination if best_combination else None
-
-
 # Función para convertir duración en formato HH:MM:SS a segundos
-
 def parse_duration(duration_str):
-    parts = list(map(int, duration_str.split(':')))
-    if len(parts) == 2:  # MM:SS
-        return parts[0] * 60 + parts[1]
-    elif len(parts) == 3:  # HH:MM:SS
-        return parts[0] * 3600 + parts[1] * 60 + parts[2]
-    else:
-        raise ValueError(f"Formato de duración inválido: {duration_str}")
-
-
+    h, m, s = map(int, duration_str.split(':'))
+    return h * 3600 + m * 60 + s
 
 # Función para calcular el tiempo hasta el siguiente bloque
 def calculate_time_to_next_block(current_time):
@@ -435,6 +407,23 @@ def calculate_time_to_next_block(current_time):
     
     next_block_time = current_time.replace(hour=current_hour % 24, minute=next_minute, second=0, microsecond=0)
     return next_block_time
+
+
+# Función para seleccionar contenido
+def select_content(duration_seconds, content_list):
+    selected = []
+    remaining_seconds = duration_seconds
+    
+    sorted_content = sorted(content_list, key=lambda x: x['duration'], reverse=True)
+    
+    for content in sorted_content:
+        if content['duration'] <= remaining_seconds:
+            selected.append(content)
+            remaining_seconds -= content['duration']
+        if remaining_seconds <= 0:
+            break
+    
+    return selected
 
 # Interfaz de Streamlit
 def main():
@@ -572,7 +561,6 @@ def main():
         # ------------------------------------------------------
         # Columna 2: Vista previa de la playlist
         # ------------------------------------------------------
-        
         with col2:
             st.header("📜 Vista Previa de la Playlist")
             
@@ -584,9 +572,8 @@ def main():
                 type_colors = {
                     'Program': 'background-color: #FFFFFF; color: #000000;',  # Blanco
                     'Tanda': 'background-color: #00FF00; color: #000000;',    # Verde
-                    'Promo': 'background-color: #46bdc6; color: #000000;',   # Turquesa
-                    'Filler': 'background-color: #808080; color: #FFFFFF;',  # Gris
-                    'Tanda Parcial': 'background-color: #FFFF00; color: #000000;',  # Amarillo
+                    'Promo': 'background-color: #46bdc6; color: #000000;',    # Turquesa
+                    'Filler': 'background-color: #808080; color: #FFFFFF;',   # Gris
                 }
                 
                 # Función para aplicar colores
