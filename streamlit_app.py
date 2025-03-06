@@ -73,20 +73,20 @@ def authenticate_google_sheets():
         return None
 
 # Función para cargar programas desde Google Sheets
-def load_programs_from_google_sheet():
+def load_programs_from_google_sheet(sheet_name):
     client = authenticate_google_sheets()
     if not client:
         return []
     try:
-        spreadsheet_id = '1Ka9YhP860lZlibXudUkr7an7zGs-spO54KBmidpNr1A'
+        spreadsheet_id = '1Ka9YhP860lZlibXudUkr7an7zGs-spO54KBmidpNr1A'  # ID de tu Google Sheet
         spreadsheet = client.open_by_key(spreadsheet_id)
-        worksheet = spreadsheet.sheet1
+        worksheet = spreadsheet.worksheet(sheet_name)  # Seleccionar la hoja por nombre
         data = worksheet.get_all_records()
         programs = [{'name': row['Name'], 'duration': row['Duration']} for row in data]
-        st.session_state.messages.append({"type": "success", "content": "Programas cargados correctamente"})
+        st.session_state.messages.append({"type": "success", "content": f"Programas cargados correctamente desde la hoja: {sheet_name}"})
         return programs
     except Exception as e:
-        st.session_state.messages.append({"type": "error", "content": f"Error al cargar programas: {e}"})
+        st.session_state.messages.append({"type": "error", "content": f"Error al cargar programas desde la hoja {sheet_name}: {e}"})
         return []
 
 # Función para cargar promos desde Google Sheets
@@ -137,6 +137,24 @@ def load_fillers_from_google_sheet(sheet_name):
         st.session_state.messages.append({"type": "error", "content": f"Error al cargar rellenos: {e}"})
         return []
 
+
+# Función para cargar programas nocturnos desde Google Sheets
+def load_night_programs_from_google_sheet():
+    client = authenticate_google_sheets()
+    if not client:
+        return []
+    try:
+        spreadsheet_id = '1Ka9YhP860lZlibXudUkr7an7zGs-spO54KBmidpNr1A'  # Reemplaza con el ID de tu hoja de programas nocturnos
+        spreadsheet = client.open_by_key(spreadsheet_id)
+        worksheet = spreadsheet.sheet1
+        data = worksheet.get_all_records()
+        programs = [{'name': row['Name'], 'duration': row['Duration']} for row in data]
+        st.session_state.messages.append({"type": "success", "content": "Programas nocturnos cargados correctamente"})
+        return programs
+    except Exception as e:
+        st.session_state.messages.append({"type": "error", "content": f"Error al cargar programas nocturnos: {e}"})
+        return []
+
 # Función para listar las hojas disponibles en el Google Sheet
 def list_sheets():
     client = authenticate_google_sheets()
@@ -151,93 +169,82 @@ def list_sheets():
         st.session_state.messages.append({"type": "error", "content": f"Error al listar las hojas: {e}"})
         return []
 
-# Función para exportar a Excel
-def export_to_excel(playlist):
-    try:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Playlist"
-        headers = ['Item', 'Hora de Inicio', 'Nombre', 'Duración', 'Tipo']
-        ws.append(headers)
-        header_font = Font(bold=True, color="FFFFFF")
-        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
-        for col in ws.iter_cols(min_row=1, max_row=1, min_col=1, max_col=len(headers)):
-            for cell in col:
-                cell.font = header_font
-                cell.fill = header_fill
-        for i, block in enumerate(playlist, start=1):
-            ws.append([block['item'], block['start_time'], block['name'], block['duration'], block['type']])
-        for column in ws.columns:
-            max_length = max(len(str(cell.value)) for cell in column)
-            ws.column_dimensions[column[0].column_letter].width = max_length + 2
-        filename = f"playlist_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
-        wb.save(filename)
-        st.session_state.messages.append({"type": "success", "content": f"Playlist exportada correctamente a: {filename}"})
-    except Exception as e:
-        st.session_state.messages.append({"type": "error", "content": f"Error al exportar a Excel: {e}"})
+def hex_to_rgb(hex_color):
+    """
+    Convierte un color hexadecimal en un diccionario con valores RGB.
+    Ejemplo: "#ea4335" -> {"red": 0.9176, "green": 0.2627, "blue": 0.2078}
+    """
+    hex_color = hex_color.lstrip('#')
+    r = int(hex_color[0:2], 16) / 255.0
+    g = int(hex_color[2:4], 16) / 255.0
+    b = int(hex_color[4:6], 16) / 255.0
+    return {"red": r, "green": g, "blue": b}
 
-# Función para exportar a Google Sheets con colores
-def export_to_google_sheets(playlist, sheet_title):
+# Función para exportar a Google Sheets con colores personalizados
+def export_to_google_sheets(playlist, sheet_title, selected_sheet):
     try:
         client = authenticate_google_sheets()
         if not client:
             return
+        
+        # Inicializar la lista de formatos
+        formats = []
+        
         spreadsheet_id = '1SeKSZLR7IWrVVj9ny5hezcS-Nro06Amp9S29W6pMovU'  # Reemplaza con tu ID
         spreadsheet = client.open_by_key(spreadsheet_id)
 
         # Crear una nueva hoja dentro del Google Sheet
-        worksheet = spreadsheet.add_worksheet(title=sheet_title, rows="100", cols="5")
+        worksheet = spreadsheet.add_worksheet(title=sheet_title, rows="100", cols="6")
 
         # Escribir los encabezados en la primera fila
-        headers = ['Item', 'Hora de Inicio', 'Nombre', 'Duración', 'Tipo']
-        worksheet.update(values=[headers], range_name='A1:E1')
+        headers = ['Item', 'Hora de Inicio', 'Nombre', 'Duración', 'Tipo', 'Relleno']
+        worksheet.update(values=[headers], range_name='A1:F1')
 
-        # Definir colores para cada tipo
-        type_colors = {
-            'Program': {'red': 1.0, 'green': 1.0, 'blue': 1.0},  # Blanco
-            'Tanda': {'red': 0.0, 'green': 1.0, 'blue': 0.0},    # Verde
-            'Promo': {'red': 0.27, 'green': 0.74, 'blue': 0.78}, # Turquesa (#46bdc6)
-            'Filler': {'red': 0.5, 'green': 0.5, 'blue': 0.5},   # Gris
-            'Tanda Parcial': {'red': 1.0, 'green': 1.0, 'blue': 0.0},  # Amarillo (#FFFF00)
-        }
+        # Obtener la configuración del relleno seleccionado
+        relleno_info = relleno_config.get(selected_sheet, {})
+        type_colors = relleno_info.get("type_colors", {})
 
         # Crear las filas de datos
         rows = []
-        formats = []
         for i, block in enumerate(playlist, start=2):  # Comenzar desde la fila 2
             rows.append([
                 block['item'],  # Número de ítem
                 block['start_time'],
                 block['name'],
                 block['duration'],
-                block['type']
+                block['type'],
+                block.get('relleno', ''),  # Agregar el relleno seleccionado
             ])
-            # Aplicar formato de color según el tipo
-            row_range = f'A{i}:E{i}'
+
+            # Determinar el color de fondo según el tipo de contenido
+            background_color = type_colors.get(block['type'], "#FFFFFF")  # Color por defecto si no se encuentra
+
+            # Aplicar formato de color a la fila
+            row_range = f'A{i}:F{i}'
             formats.append({
                 "range": row_range,
                 "format": {
-                    "backgroundColor": type_colors.get(block['type']),  # Usar el color correspondiente
+                    "backgroundColor": hex_to_rgb(background_color),
                     "textFormat": {"bold": block['type'] in ['Program', 'Tanda']}
                 }
             })
 
         # Escribir las filas en una sola llamada
-        worksheet.update(values=rows, range_name=f'A2:E{len(rows) + 1}')
+        worksheet.update(values=rows, range_name=f'A2:F{len(rows) + 1}')
 
         # Aplicar los formatos en un solo lote
         worksheet.batch_format(formats)
 
         # Aplicar formato a los encabezados
-        worksheet.format('A1:E1', {
-            'backgroundColor': {'red': 0.0, 'green': 0.5, 'blue': 0.8},  # Azul claro
-            'textFormat': {'bold': True, 'foregroundColor': {'red': 1.0, 'green': 1.0, 'blue': 1.0}}  # Blanco
+        worksheet.format('A1:F1', {
+            'backgroundColor': hex_to_rgb("#007ACC"),  # Azul claro
+            'textFormat': {'bold': True, 'foregroundColor': hex_to_rgb("#FFFFFF")}  # Blanco
         })
 
         st.session_state.messages.append({"type": "success", "content": f"Playlist exportada correctamente a Google Sheets: {spreadsheet.url} -> {sheet_title}"})
     except Exception as e:
         st.session_state.messages.append({"type": "error", "content": f"Error al exportar a Google Sheets: {e}"})
-
+        
 def find_exact_combination(target, content_list):
     # Versión optimizada para grandes volúmenes
     dp = {0: []}
@@ -249,89 +256,322 @@ def find_exact_combination(target, content_list):
                     dp[new_sum] = dp[s] + [content]
     return dp.get(target, None)
 
-from datetime import datetime, date, timedelta
+# Mover format_duration fuera 
+def format_duration(s):
+    if not isinstance(s, (int, float)) or s < 0:
+        return "00:00:00"
+    return f"{int(s//3600):02d}:{int((s//60)%60):02d}:{int(s%60):02d}"
 
-def generate_playlist(start_time, end_time, promos, fillers, user_programs):
+# Función para seleccionar un programa que no sea el último y que quepa en el tiempo restante
+def select_program(user_programs, last_program, time_remaining):
+    for program in user_programs:
+        if program['name'] != last_program and program['duration_seconds'] <= time_remaining:
+            return program
+    return None
+
+# Función para agregar promos y rellenos al bloque especial
+def add_promos_and_fillers(block_special, time_remaining, promos, fillers, item_counter, current_time):
+    combination = find_optimal_combination(time_remaining, promos + fillers)
+    if combination:
+        for content in combination:
+            content_type = 'Promo' if content in promos else 'Filler'
+            block_special.append({
+                "item": item_counter,
+                "start_time": current_time.strftime("%H:%M:%S"),
+                "name": content['name'],
+                "duration": format_duration(content['duration_seconds']),
+                "duration_seconds": content['duration_seconds'],
+                "type": content_type,
+                "block": "Especial"
+            })
+            item_counter += 1
+            current_time += timedelta(seconds=content['duration_seconds'])
+            time_remaining -= content['duration_seconds']
+    return block_special, item_counter, current_time, time_remaining
+
+# Diccionario de configuración de rellenos
+relleno_config = {
+    "Cultura": {
+        "Normal": {"background": "#bf9000", "text": "#000000"},
+        "¿Sabías qué?": {"background": "#93c47d", "text": "#000000"},
+        "En tus palabras": {"background": "#ff6d01", "text": "#000000"},
+        "Texto de tanda": "TANDA RELLENO 1 MIN CULTURA NEW",
+        "Color de tanda": "#f1c232",
+        "type_colors": {
+            'Program': '#FFFFFF',  # Blanco
+            'Tanda': '#f1c232',    # Amarillo (color de tanda para Cultura)
+            'Promo': '#46bdc6',    # Turquesa
+            'Filler': '#bf9000',   # Marrón (color de fondo normal para Cultura)
+            'Tanda Parcial': '#FFFF00',  # Amarillo
+        }
+    },
+    "Teleseries": {
+        "Color de fondo": "#9d34a8",
+        "Color de texto": "#000000",
+        "Texto de tanda": "TANDA 60 SEGUNDOS 13T NEW",
+        "Color de tanda": "#b4a7d6",
+        "type_colors": {
+            'Program': '#FFFFFF',  # Blanco
+            'Tanda': '#b4a7d6',    # Lila (color de tanda para Teleseries)
+            'Promo': '#46bdc6',    # Turquesa
+            'Filler': '#9d34a8',   # Morado (color de fondo para Teleseries)
+            'Tanda Parcial': '#FFFF00',  # Amarillo
+        }
+    },
+    "Realities": {
+        "Color de fondo": "#ff0000",
+        "Color de texto": "#000000",
+        "Texto de tanda": "TANDA 60 SEGUNDOS 13R NEW",
+        "Color de tanda": "#f06e63",
+        "type_colors": {
+            'Program': '#FFFFFF',  # Blanco
+            'Tanda': '#f06e63',    # Rojo claro (color de tanda para Realities)
+            'Promo': '#46bdc6',    # Turquesa
+            'Filler': '#ff0000',   # Rojo (color de fondo para Realities)
+            'Tanda Parcial': '#FFFF00',  # Amarillo
+        }
+    },
+    "Festival": {
+        "Color de fondo": "#d83787",
+        "Color de texto": "#000000",
+        "Texto de tanda": "TANDA 60 SEGUNDOS 13FESTIVAL NEW",
+        "Color de tanda": "#c27ba0",
+        "type_colors": {
+            'Program': '#FFFFFF',  # Blanco
+            'Tanda': '#c27ba0',    # Rosa (color de tanda para Festival)
+            'Promo': '#46bdc6',    # Turquesa
+            'Filler': '#d83787',   # Rosa oscuro (color de fondo para Festival)
+            'Tanda Parcial': '#FFFF00',  # Amarillo
+        }
+    },
+    "Pop": {
+        "Color de fondo": "#ea4335",
+        "Color de texto": "#000000",
+        "Texto de tanda": "TANDA 60 SEGUNDOS 13POP",
+        "Color de tanda": "#fbbc04",
+        "type_colors": {
+            'Program': '#FFFFFF',  # Blanco
+            'Tanda': '#fbbc04',    # Naranja (color de tanda para Pop)
+            'Promo': '#46bdc6',    # Turquesa
+            'Filler': '#ea4335',   # Rojo (color de fondo para Pop)
+            'Tanda Parcial': '#FFFF00',  # Amarillo
+        }
+    },
+}
+
+# Función para generar la playlist
+def generate_playlist(start_time, end_time, promos, fillers, user_programs, selected_sheet, include_block_zero=True):
     def format_duration(s):
-        return f"{s//3600:02d}:{(s//60)%60:02d}:{s%60:02d}"
-    
-    # Manejo correcto de fechas
+        if not isinstance(s, (int, float)) or s < 0:
+            return "00:00:00"
+        return f"{int(s//3600):02d}:{int((s//60)%60):02d}:{int(s%60):02d}"
+
+    # Obtener la configuración del relleno seleccionado
+    relleno_info = relleno_config.get(selected_sheet, {})
+    tanda_text = relleno_info.get("Texto de tanda", "TANDA 60s")  # Texto de tanda personalizado
+
+    # Verificar si el horario de fin es del día siguiente
     start_date = date.today()
+    if end_time < start_time:
+        end_date = start_date + timedelta(days=1)  # El horario de fin es del día siguiente
+    else:
+        end_date = start_date  # El horario de fin es del mismo día
+
+    # Convertir a datetime
     start_datetime = datetime.combine(start_date, start_time)
-    end_datetime = datetime.combine(start_date, end_time)
-    
+    end_datetime = datetime.combine(end_date, end_time)
+
     current_time = start_datetime
     playlist = []
     item_counter = 1
-    block_counter = 0
 
-    while current_time < end_datetime and user_programs:
-        block_counter += 1
-        program = user_programs.pop(0)
-        program_duration = parse_duration(program['duration'])
-        
-        # Agregar programa
+    # Bloque 0 (Tanda inicial) - Solo si include_block_zero es True
+    if include_block_zero:
         playlist.append({
+            "item": item_counter,
+            "start_time": current_time.strftime("%H:%M:%S"),
+            "name": tanda_text,  # Usar el texto de tanda personalizado
+            "duration": "00:01:00",
+            "duration_seconds": 60,
+            "type": "Tanda",
+            "block": 0,
+            "relleno": selected_sheet,  # Agregar el relleno seleccionado
+        })
+        item_counter += 1
+        current_time += timedelta(seconds=60)
+
+    # Precalcular duraciones
+    for program in user_programs:
+        program['duration_seconds'] = parse_duration(program['duration'])
+    for promo in promos:
+        promo['duration_seconds'] = parse_duration(promo['duration'])
+    for filler in fillers:
+        filler['duration_seconds'] = parse_duration(filler['duration'])
+
+    # Generar bloques iniciales
+    initial_blocks = []
+    while user_programs:
+        block = []
+        program = user_programs.pop(0)
+        program_duration = program['duration_seconds']
+        
+        # Programa principal
+        block.append({
             "item": item_counter,
             "start_time": current_time.strftime("%H:%M:%S"),
             "name": program['name'],
             "duration": format_duration(program_duration),
+            "duration_seconds": program_duration,
             "type": "Program",
-            "block": block_counter
+            "block": len(initial_blocks) + 1,
+            "relleno": selected_sheet,  # Agregar el relleno seleccionado
         })
         item_counter += 1
         current_time += timedelta(seconds=program_duration)
-        
-        # Lógica de llenado mejorada
-        remaining_block_time = (calculate_time_to_next_block(current_time) - current_time).total_seconds()
-        
-        # Primero intentar con promos/rellenos
-        combination = find_optimal_combination(remaining_block_time, promos + fillers)
-        
-        if combination:
-            for content in combination:
-                content_type = 'Promo' if content in promos else 'Filler'
-                playlist.append({
-                    "item": item_counter,
-                    "start_time": current_time.strftime("%H:%M:%S"),
-                    "name": content['name'],
-                    "duration": format_duration(content['duration']),
-                    "type": content_type,
-                    "block": block_counter
-                })
-                item_counter += 1
-                current_time += timedelta(seconds=content['duration'])
-                remaining_block_time -= content['duration']
-        
-        # Usar tandas solo si queda tiempo y es necesario
+
+        # Calcular tiempo hasta siguiente bloque
+        next_block_time = calculate_time_to_next_block(current_time)
+        remaining_block_time = (next_block_time - current_time).total_seconds()
+        remaining_block_time = max(remaining_block_time, 0)
+
+        # Tanda de 60s obligatoria
         if remaining_block_time >= 60:
-            tanda_count = min(int(remaining_block_time // 60), 3)
-            for _ in range(tanda_count):
-                playlist.append({
-                    "item": item_counter,
-                    "start_time": current_time.strftime("%H:%M:%S"),
-                    "name": "Tanda 60s",
-                    "duration": "00:01:00",
-                    "type": "Tanda",
-                    "block": block_counter
-                })
-                item_counter += 1
-                current_time += timedelta(seconds=60)
-                remaining_block_time -= 60
-        
+            block.append({
+                "item": item_counter,
+                "start_time": current_time.strftime("%H:%M:%S"),
+                "name": tanda_text,  # Usar el texto de tanda personalizado
+                "duration": "00:01:00",
+                "duration_seconds": 60,
+                "type": "Tanda",
+                "block": len(initial_blocks) + 1,
+                "relleno": selected_sheet,  # Agregar el relleno seleccionado
+            })
+            item_counter += 1
+            current_time += timedelta(seconds=60)
+            remaining_block_time -= 60
+
+        # Rellenar con promos/rellenos
+        if remaining_block_time > 0:
+            combination = find_optimal_combination(remaining_block_time, promos + fillers)
+            if combination:
+                for content in combination:
+                    content_type = 'Promo' if content in promos else 'Filler'
+                    block.append({
+                        "item": item_counter,
+                        "start_time": current_time.strftime("%H:%M:%S"),
+                        "name": content['name'],
+                        "duration": format_duration(content['duration_seconds']),
+                        "duration_seconds": content['duration_seconds'],
+                        "type": content_type,
+                        "block": len(initial_blocks) + 1,
+                        "relleno": selected_sheet,  # Agregar el relleno seleccionado
+                    })
+                    item_counter += 1
+                    current_time += timedelta(seconds=content['duration_seconds'])
+                    remaining_block_time -= content['duration_seconds']
+
         # Tanda parcial residual
         if remaining_block_time > 0:
-            playlist.append({
+            block.append({
                 "item": item_counter,
                 "start_time": current_time.strftime("%H:%M:%S"),
                 "name": f"Tanda Parcial ({int(remaining_block_time)}s)",
                 "duration": format_duration(remaining_block_time),
+                "duration_seconds": remaining_block_time,
                 "type": "Tanda Parcial",
-                "block": block_counter
+                "block": len(initial_blocks) + 1,
+                "relleno": selected_sheet,  # Agregar el relleno seleccionado
             })
             item_counter += 1
             current_time += timedelta(seconds=remaining_block_time)
-    
+
+        initial_blocks.append(block)
+        # Agregar bloque inicial a la playlist
+        for item in block:
+            playlist.append(item)
+
+    # Repetición cíclica de bloques
+    block_index = 0
+    while current_time < end_datetime:
+        current_block = initial_blocks[block_index % len(initial_blocks)]
+        block_duration = sum(item['duration_seconds'] for item in current_block)
+        
+        if current_time + timedelta(seconds=block_duration) > end_datetime:
+            break
+
+        for item in current_block:
+            playlist.append({
+                "item": item_counter,
+                "start_time": current_time.strftime("%H:%M:%S"),
+                "name": item['name'],
+                "duration": item['duration'],
+                "type": item['type'],
+                "block": item['block'],
+                "relleno": selected_sheet,  # Agregar el relleno seleccionado
+            })
+            item_counter += 1
+            current_time += timedelta(seconds=item['duration_seconds'])
+        
+        block_index += 1
+
+    # Bloque especial final
+    time_remaining = (end_datetime - current_time).total_seconds()
+    if time_remaining > 0:
+        last_program = playlist[-1]['name'] if playlist and playlist[-1]['type'] == 'Program' else None
+        selected_program = next((p for p in user_programs if p['name'] != last_program and p['duration_seconds'] <= time_remaining), None)
+        
+        block_special = []
+        if selected_program:
+            block_special.append({
+                "item": item_counter,
+                "start_time": current_time.strftime("%H:%M:%S"),
+                "name": selected_program['name'],
+                "duration": format_duration(selected_program['duration_seconds']),
+                "duration_seconds": selected_program['duration_seconds'],
+                "type": "Program",
+                "block": "Especial",
+                "relleno": selected_sheet,  # Agregar el relleno seleccionado
+            })
+            item_counter += 1
+            current_time += timedelta(seconds=selected_program['duration_seconds'])
+            time_remaining -= selected_program['duration_seconds']
+
+        if time_remaining >= 60:
+            block_special.append({
+                "item": item_counter,
+                "start_time": current_time.strftime("%H:%M:%S"),
+                "name": tanda_text,  # Usar el texto de tanda personalizado
+                "duration": "00:01:00",
+                "duration_seconds": 60,
+                "type": "Tanda",
+                "block": "Especial",
+                "relleno": selected_sheet,  # Agregar el relleno seleccionado
+            })
+            item_counter += 1
+            current_time += timedelta(seconds=60)
+            time_remaining -= 60
+
+        if time_remaining > 0:
+            combination = find_optimal_combination(time_remaining, promos + fillers)
+            if combination:
+                for content in combination:
+                    content_type = 'Promo' if content in promos else 'Filler'
+                    block_special.append({
+                        "item": item_counter,
+                        "start_time": current_time.strftime("%H:%M:%S"),
+                        "name": content['name'],
+                        "duration": format_duration(content['duration_seconds']),
+                        "duration_seconds": content['duration_seconds'],
+                        "type": content_type,
+                        "block": "Especial",
+                        "relleno": selected_sheet,  # Agregar el relleno seleccionado
+                    })
+                    item_counter += 1
+                    current_time += timedelta(seconds=content['duration_seconds'])
+                    time_remaining -= content['duration_seconds']
+
+        playlist.extend(block_special)
+
     return playlist
 
 def find_optimal_combination(time_available, content_pool, max_tandas=3):
@@ -355,75 +595,24 @@ def find_optimal_combination(time_available, content_pool, max_tandas=3):
                 
     return best_combination if best_score > -1 else None
 
-
-# Función auxiliar nueva para combinaciones balanceadas
-def find_balanced_combination(time_available, promos, fillers):
-    from itertools import permutations
-    
-    # Combinaciones posibles de 2 elementos (1 promo + 1 filler)
-    for combo in permutations(promos + fillers, 2):
-        total = sum(c['duration'] for c in combo)
-        if total == time_available:
-            return [{'name': c['name'], 'duration': c['duration'], 'type': 'Promo' if c in promos else 'Filler'} for c in combo]
-    
-    # Combinaciones de 3 elementos (2 promos + 1 filler)
-    for combo in permutations(promos + fillers, 3):
-        types = ['Promo' if c in promos else 'Filler' for c in combo]
-        if types.count('Promo') == 2 and types.count('Filler') == 1:
-            total = sum(c['duration'] for c in combo)
-            if total == time_available:
-                return [{'name': c['name'], 'duration': c['duration'], 'type': 'Promo' if c in promos else 'Filler'} for c in combo]
-    
-    # Si no hay combinaciones balanceadas, buscar cualquier combinación exacta
-    all_content = sorted(promos + fillers, key=lambda x: -x['duration'])
-    return find_exact_combination(time_available, all_content)
-
-
-# Función auxiliar nueva para aproximaciones
-def find_best_approximation(target, content_list):
-    best_combination = []
-    best_diff = float('inf')
-    
-    # Ordenar contenido de mayor a menor duración
-    sorted_content = sorted(content_list, key=lambda x: -x['duration'])
-    
-    for content in sorted_content:
-        if content['duration'] > target:
-            continue
-        current_sum = content['duration']
-        current_comb = [content]
-        
-        for item in sorted_content:
-            if item == content:
-                continue
-            if current_sum + item['duration'] <= target:
-                current_sum += item['duration']
-                current_comb.append(item)
-                
-        diff = target - current_sum
-        if diff < best_diff:
-            best_diff = diff
-            best_combination = current_comb
-            
-    return best_combination if best_combination else None
-
-
 # Función para convertir duración en formato HH:MM:SS a segundos
-
 def parse_duration(duration_str):
-    parts = list(map(int, duration_str.split(':')))
-    if len(parts) == 2:  # MM:SS
-        return parts[0] * 60 + parts[1]
-    elif len(parts) == 3:  # HH:MM:SS
-        return parts[0] * 3600 + parts[1] * 60 + parts[2]
-    else:
-        raise ValueError(f"Formato de duración inválido: {duration_str}")
-
-
+    if isinstance(duration_str, (int, float)):  # Si ya es un número, lo devolvemos directamente
+        return duration_str
+    try:
+        parts = list(map(int, duration_str.split(':')))  # Convertir a lista de enteros
+        if len(parts) == 2:  # Formato MM:SS
+            return parts[0] * 60 + parts[1]
+        elif len(parts) == 3:  # Formato HH:MM:SS
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        else:
+            raise ValueError(f"Formato de duración inválido: {duration_str}")
+    except Exception as e:
+        raise ValueError(f"Error al parsear la duración: {e}")
 
 # Función para calcular el tiempo hasta el siguiente bloque
 def calculate_time_to_next_block(current_time):
-    valid_start_minutes = [0, 10, 15, 20, 30, 40, 45, 50]
+    valid_start_minutes = [0, 15, 30, 45]
     current_hour, current_minute = current_time.hour, current_time.minute
     next_valid_minutes = [m for m in valid_start_minutes if m > current_minute]
     
@@ -481,32 +670,31 @@ def main():
         )
 
         # Botón para generar la playlist
+        # Modo Simple
+        # Modo Simple
         if st.button("✨ Generar Playlist", type="primary", use_container_width=True):
             # Cargar datos antes de generar la playlist
             with st.spinner("🔍 Cargando programas, promos y rellenos..."):
                 promos = load_promos_from_google_sheet()
-                user_programs = load_programs_from_google_sheet()
+                day_programs = load_programs_from_google_sheet("dia")  # Cargar programas diurnos
                 fillers = load_fillers_from_google_sheet(selected_sheet) if sheets else []
 
                 # Verificar si hay datos suficientes
-                if not user_programs or not promos or not fillers:
+                if not day_programs or not promos or not fillers:
                     st.session_state.messages.append({"type": "warning", "content": "Faltan datos para generar la playlist"})
                 else:
                     # Usar horarios predeterminados en modo simple
                     start_time = datetime.strptime("05:59:00", "%H:%M:%S").time()
                     end_time = datetime.strptime("23:59:00", "%H:%M:%S").time()
-                    start_time_dt = datetime.combine(datetime.today(), start_time)
-                    end_time_dt = datetime.combine(datetime.today(), end_time)
 
                     # Generar playlist
-                    playlist = generate_playlist(start_time_dt, end_time_dt, promos, fillers, user_programs)
+                    playlist = generate_playlist(start_time, end_time, promos, fillers, day_programs, selected_sheet)  # Agregar selected_sheet
                     st.session_state.playlist = playlist
                     st.session_state.messages.append({"type": "success", "content": "Playlist generada correctamente"})
 
                     # Exportar automáticamente a Google Sheets
-                    export_to_google_sheets(st.session_state.playlist, st.session_state.sheet_title)
+                    export_to_google_sheets(st.session_state.playlist, st.session_state.sheet_title, selected_sheet)  # Agregar selected_sheet
                     st.session_state.messages.append({"type": "success", "content": "Playlist exportada a Google Sheets"})
-
         # Mostrar mensajes de notificación
         if st.session_state.messages:
             st.markdown("### 📢 Notificaciones")
@@ -546,29 +734,44 @@ def main():
             
             # Configuración de horarios
             st.subheader("⏰ Horarios")
-            start_time = st.time_input("Hora de inicio", value=datetime.strptime("05:59:00", "%H:%M:%S").time())
-            end_time = st.time_input("Hora de fin", value=datetime.strptime("23:59:00", "%H:%M:%S").time())
+            use_night_schedule = st.toggle("🌙 Usar horario nocturno", value=False)
+            
+            st.markdown("**Horario diurno**")
+            day_start_time = st.time_input("Hora de inicio (diurno)", value=datetime.strptime("05:59:00", "%H:%M:%S").time())
+            day_end_time = st.time_input("Hora de fin (diurno)", value=datetime.strptime("21:00:00", "%H:%M:%S").time())
+            
+            if use_night_schedule:
+                st.markdown("**Horario nocturno**")
+                night_start_time = st.time_input("Hora de inicio (nocturno)", value=datetime.strptime("21:00:00", "%H:%M:%S").time())
+                night_end_time = st.time_input("Hora de fin (nocturno)", value=datetime.strptime("06:00:00", "%H:%M:%S").time())
             
             st.markdown("---")
             
             # Botón para generar la playlist
+            # Modo Completo
             if st.button("✨ Generar Playlist", type="primary", use_container_width=True):
                 # Cargar datos antes de generar la playlist
                 with st.spinner("🔍 Cargando programas, promos y rellenos..."):
                     promos = load_promos_from_google_sheet()
-                    user_programs = load_programs_from_google_sheet()
+                    day_programs = load_programs_from_google_sheet("dia")  # Cargar programas diurnos
+                    night_programs = load_programs_from_google_sheet("noche") if use_night_schedule else []  # Cargar programas nocturnos
                     fillers = load_fillers_from_google_sheet(selected_sheet) if sheets else []
 
                     # Verificar si hay datos suficientes
-                    if not user_programs or not promos or not fillers:
+                    if not day_programs or not promos or not fillers:
                         st.session_state.messages.append({"type": "warning", "content": "Faltan datos para generar la playlist"})
                     else:
-                        start_time_dt = datetime.combine(datetime.today(), start_time)
-                        end_time_dt = datetime.combine(datetime.today(), end_time)
-                        playlist = generate_playlist(start_time_dt, end_time_dt, promos, fillers, user_programs)
-                        st.session_state.playlist = playlist
+                        # Generar playlist diurna
+                        day_playlist = generate_playlist(day_start_time, day_end_time, promos, fillers, day_programs, selected_sheet)  # Agregar selected_sheet
+                        
+                        # Generar playlist nocturna (si está activado)
+                        night_playlist = []
+                        if use_night_schedule:
+                            night_playlist = generate_playlist(night_start_time, night_end_time, promos, fillers, night_programs, selected_sheet, include_block_zero=False)  # Agregar selected_sheet
+                        
+                        # Combinar playlists
+                        st.session_state.playlist = day_playlist + night_playlist
                         st.session_state.messages.append({"type": "success", "content": "Playlist generada correctamente"})
-
         # ------------------------------------------------------
         # Columna 2: Vista previa de la playlist
         # ------------------------------------------------------
@@ -590,12 +793,17 @@ def main():
                 }
                 
                 # Función para aplicar colores
-                def apply_colors(row):
-                    color = type_colors.get(row['type'], '')  # Obtener el color según el tipo
-                    return [color] * len(row)  # Aplicar el color a todas las celdas de la fila
+                def apply_colors(row, selected_sheet):
+                    # Obtener los colores del relleno seleccionado
+                    relleno_info = relleno_config.get(selected_sheet, {})
+                    type_colors = relleno_info.get("type_colors", {})
+                    
+                    # Obtener el color según el tipo de contenido
+                    color = type_colors.get(row['type'], '')  # Si no hay color, se usa una cadena vacía
+                    return [f'background-color: {color};'] * len(row)  # Aplicar el color de fondo a todas las celdas de la fila
                 
                 # Aplicar colores al DataFrame
-                styled_playlist = playlist_df.style.apply(apply_colors, axis=1)
+                styled_playlist = playlist_df.style.apply(lambda row: apply_colors(row, selected_sheet), axis=1)
                 
                 # Mostrar el DataFrame con colores
                 st.dataframe(
@@ -630,17 +838,13 @@ def main():
             st.session_state.sheet_title = new_sheet_name
             
             # Botones de exportación
+            # Modo Completo
             if st.button("💾 Exportar a Google Sheets", use_container_width=True):
                 if st.session_state.playlist:
-                    export_to_google_sheets(st.session_state.playlist, st.session_state.sheet_title)
+                    export_to_google_sheets(st.session_state.playlist, st.session_state.sheet_title, selected_sheet)  # Agregar selected_sheet
                 else:
                     st.session_state.messages.append({"type": "error", "content": "No hay playlist para exportar"})
             
-            if st.button("📥 Exportar a Excel", use_container_width=True):
-                if st.session_state.playlist:
-                    export_to_excel(st.session_state.playlist)
-                else:
-                    st.session_state.messages.append({"type": "error", "content": "No hay playlist para exportar"})
             
             st.markdown("---")
             
