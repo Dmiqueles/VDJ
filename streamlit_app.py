@@ -1158,7 +1158,7 @@ class ContentManager:
                 
         return combination
 # ----------------------------------------------
-# Funciones de exportación
+# Funciones de exportacióna
 # ----------------------------------------------
 
 
