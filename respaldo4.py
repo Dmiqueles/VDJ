@@ -496,159 +496,91 @@ def is_time_in_range(time_str, start_time, end_time, is_night_range=False):
         # Para rangos diurnos (ej. 06:00 - 21:00)
         return start_time <= check_time <= end_time
 
-def validate_schedules(day_programs, night_programs, day_start_time, night_start_time=None):
-    """Valida todos los horarios manuales para detectar solapamientos, considerando cruce de días."""
-    all_slots = []
-    today = date.today()
-    
-    # Procesar programas diurnos
-    for prog in day_programs:
-        if not prog.get('manual_start_time'):
-            continue
-            
-        start_time = datetime.strptime(prog['manual_start_time'], "%H:%M:%S").time()
-        start_dt = datetime.combine(today, start_time)
-        
-        # Si el programa comienza antes del inicio del horario diurno, asumir que es del día siguiente
-        if start_time < day_start_time:
-            start_dt += timedelta(days=1)
-            
-        end_dt = start_dt + timedelta(seconds=prog['duration_seconds'])
-        all_slots.append({
-            'name': prog['name'],
-            'start': start_dt,
-            'end': end_dt,
-            'type': 'day'
-        })
-    
-    # Procesar programas nocturnos
-    if night_start_time:
-        for prog in night_programs:
-            if not prog.get('manual_start_time'):
-                continue
-                
-            start_time = datetime.strptime(prog['manual_start_time'], "%H:%M:%S").time()
-            start_dt = datetime.combine(today, start_time)
-            
-            # Ajustar para horario nocturno (si el programa comienza antes del inicio nocturno, es del día siguiente)
-            if start_time < night_start_time:
-                start_dt += timedelta(days=1)
-                
-            end_dt = start_dt + timedelta(seconds=prog['duration_seconds'])
-            all_slots.append({
-                'name': prog['name'],
-                'start': start_dt,
-                'end': end_dt,
-                'type': 'night'
-            })
-    
-    # Verificar solapamientos considerando el cruce de días
-    overlaps = []
-    for i in range(len(all_slots)):
-        for j in range(i+1, len(all_slots)):
-            slot1 = all_slots[i]
-            slot2 = all_slots[j]
-            
-            # Verificar si los intervalos se solapan
-            if slot1['start'] < slot2['end'] and slot2['start'] < slot1['end']:
-                overlaps.append((
-                    f"{slot1['name']} ({slot1['type']})",
-                    f"{slot2['name']} ({slot2['type']})"
-                ))
-    
-    return (len(overlaps) == 0, overlaps)
-
 # ----------------------------------------------
 # Clase PlaylistGenerator
 # ----------------------------------------------
 class PlaylistGenerator:
     """Clase para generar playlists."""
     
-    def __init__(self, start_time, promos=None, fillers=None, user_programs=None, 
-                include_block_zero=True, is_night_schedule=False, reference_date=None,
-                force_start_datetime=None, use_manual_times=False,
-                duration_hours=None, end_time=None):
+    def __init__(self, start_time, end_time, promos, fillers, user_programs, 
+                 include_block_zero=True, is_night_schedule=False, reference_date=None,
+                 force_start_datetime=None, use_manual_times=False):
         """
-        Inicializa el generador de playlists con soporte para 24+ horas.
+        Inicializa el generador de playlists.
         
         Args:
-            start_time (time): Hora de inicio local (ej. time(6,0))
-            promos (list): Lista de promos disponibles
-            fillers (list): Lista de fillers disponibles
-            user_programs (list): Lista de programas a programar
-            include_block_zero (bool): Si incluir bloque inicial de tanda
-            is_night_schedule (bool): Si es horario nocturno (legacy)
-            reference_date (date): Fecha de referencia para la playlist
-            force_start_datetime (datetime): Fuerza un datetime específico
-            use_manual_times (bool): Usar horarios manuales de los programas
-            duration_hours (int): Duración total en horas (alternativa a end_time)
-            end_time (time): Hora de finalización local (alternativa a duration_hours)
-            
-        Nota:
-            - Usar duration_hours O end_time, no ambos
-            - Si se usa force_start_datetime, ignora reference_date
+            start_time (time): Hora de inicio
+            end_time (time): Hora de fin
+            promos (list): Lista de promos
+            fillers (list): Lista de rellenos
+            user_programs (list): Lista de programas
+            include_block_zero (bool): Si se debe incluir el bloque 0
+            is_night_schedule (bool): Si es horario nocturno
+            reference_date (date, optional): Fecha de referencia para el horario
+            force_start_datetime (datetime, optional): Forzar una fecha y hora de inicio específica
+            use_manual_times (bool): Si se deben usar los horarios manuales asignados
         """
-        # Inicializar listas si no se proporcionan
-        self.promos = promos or []
-        self.fillers = fillers or []
-        self.user_programs = user_programs.copy() if user_programs else []
-        
-        # Configuración de comportamiento
+        self.start_time = start_time
+        self.end_time = end_time
+        self.promos = promos
+        self.fillers = fillers
+        self.user_programs = user_programs.copy()  # Crear copia para no modificar el original
         self.include_block_zero = include_block_zero
         self.is_night_schedule = is_night_schedule
         self.use_manual_times = use_manual_times
         
-        # Manejo de fechas y tiempos
+        # Usar la fecha de referencia proporcionada o la fecha actual
         self.reference_date = reference_date or date.today()
         
-        # Configuración de tiempo de ejecución
-        if force_start_datetime:
-            # Modo forzado (toma precedencia sobre todo)
-            self.start_datetime = force_start_datetime
-            if duration_hours:
-                self.end_datetime = self.start_datetime + timedelta(hours=duration_hours)
-            elif end_time:
-                end_date = self.start_datetime.date()
-                if end_time < self.start_datetime.time():
-                    end_date += timedelta(days=1)
-                self.end_datetime = datetime.combine(end_date, end_time)
+        # Manejar correctamente los horarios nocturnos
+        if is_night_schedule:
+            # Para horarios nocturnos, la fecha de inicio es la fecha de referencia
+            self.start_date = self.reference_date
+            # La fecha de fin es el día siguiente si la hora de fin es menor que la hora de inicio
+            if end_time < start_time:
+                self.end_date = self.reference_date + timedelta(days=1)
             else:
-                raise ValueError("Se requiere duration_hours o end_time con force_start_datetime")
+                self.end_date = self.reference_date
         else:
-            # Modo normal (usa reference_date + start_time)
-            self.start_datetime = datetime.combine(self.reference_date, start_time)
-            
-            if duration_hours:
-                # Modo duración fija (24+ horas)
-                self.end_datetime = self.start_datetime + timedelta(hours=duration_hours)
-            elif end_time:
-                # Modo horario específico (compatibilidad hacia atrás)
-                end_date = self.reference_date
-                if end_time < start_time:
-                    end_date += timedelta(days=1)
-                self.end_datetime = datetime.combine(end_date, end_time)
+            # Para horarios diurnos, ambas fechas son la fecha de referencia
+            # a menos que la hora de fin sea menor que la hora de inicio
+            self.start_date = self.reference_date
+            if end_time < start_time:
+                self.end_date = self.reference_date + timedelta(days=1)
             else:
-                raise ValueError("Se requiere duration_hours o end_time")
+                self.end_date = self.reference_date
+
+        # Convertir a datetime o usar el datetime forzado si se proporciona
+        if force_start_datetime:
+            self.start_datetime = force_start_datetime
+            # Ajustar la fecha de fin basada en el datetime de inicio forzado
+            hours_diff = (datetime.combine(date.today(), end_time) - 
+                          datetime.combine(date.today(), start_time)).total_seconds() / 3600
+            if hours_diff < 0:
+                hours_diff += 24  # Ajustar si cruza a un nuevo día
+            self.end_datetime = self.start_datetime + timedelta(hours=hours_diff)
+        else:
+            self.start_datetime = datetime.combine(self.start_date, start_time)
+            self.end_datetime = datetime.combine(self.end_date, end_time)
         
-        # Validación de parámetros
-        if self.end_datetime <= self.start_datetime:
-            raise ValueError("El tiempo final debe ser después del tiempo inicial")
+        # Registrar información de depuración
+        logger.info(f"Inicializando PlaylistGenerator:")
+        logger.info(f"  Horario: {'Nocturno' if is_night_schedule else 'Diurno'}")
+        logger.info(f"  Fecha de referencia: {self.reference_date}")
+        logger.info(f"  Fecha de inicio: {self.start_date}, Hora: {start_time}")
+        logger.info(f"  Fecha de fin: {self.end_date}, Hora: {end_time}")
+        logger.info(f"  Datetime inicio: {self.start_datetime}")
+        logger.info(f"  Datetime fin: {self.end_datetime}")
+        logger.info(f"  Usando horarios manuales: {use_manual_times}")
+        if force_start_datetime:
+            logger.info(f"  Usando datetime de inicio forzado: {force_start_datetime}")
         
-        # Variables de estado interno
+        # Inicializar variables
         self.current_time = self.start_datetime
         self.playlist = []
         self.item_counter = 1
         self.initial_blocks = []
-        
-        # Logging informativo
-        logger.info(f"PlaylistGenerator inicializado:")
-        logger.info(f" - Inicio: {self.start_datetime}")
-        logger.info(f" - Fin:    {self.end_datetime}")
-        logger.info(f" - Duración total: {(self.end_datetime - self.start_datetime).total_seconds()/3600:.2f} horas")
-        logger.info(f" - Programas: {len(self.user_programs)}")
-        logger.info(f" - Promos: {len(self.promos)}, Fillers: {len(self.fillers)}")
-        logger.info(f" - Modo: {'Manual' if use_manual_times else 'Automático'}")
-        
+    
     def generate(self):
         """
         Genera la playlist completa.
@@ -679,93 +611,125 @@ class PlaylistGenerator:
         return self.playlist
     
     def _generate_with_manual_times(self):
-        """Genera playlist usando horarios manuales con manejo mejorado de horarios nocturnos."""
-        # Filtrar programas con horario asignado
-        valid_programs = [p.copy() for p in self.user_programs if p.get('manual_start_time')]
+        """
+        Genera la playlist usando los horarios manuales asignados a los programas.
+        
+        Returns:
+            list: Playlist generada con horarios manuales
+        """
+        # Optimización: Reducir la complejidad del algoritmo para mejorar el rendimiento
+        
+        # Filtrar programas que tienen horario manual asignado
+        valid_programs = [p for p in self.user_programs if p.get('manual_start_time')]
         
         if not valid_programs:
             MessageManager.add_message("warning", "No hay programas con horarios asignados manualmente")
             return []
         
-        # Convertir a objetos datetime y ajustar fechas para horario nocturno
-        for prog in valid_programs:
-            start_time = datetime.strptime(prog['manual_start_time'], "%H:%M:%S").time()
-            start_dt = datetime.combine(self.reference_date, start_time)
-            
-            # Ajustar fecha si es horario nocturno y cruza medianoche
-            if self.is_night_schedule and start_time < self.start_time:
-                start_dt += timedelta(days=1)
-            
-            prog['_start_datetime'] = start_dt
-            prog['_end_datetime'] = start_dt + timedelta(seconds=prog['duration_seconds'])
+        # Ordenar los programas por su hora de inicio manual
+        valid_programs.sort(key=lambda x: x['manual_start_time'])
         
-        # Ordenar por datetime de inicio
-        valid_programs.sort(key=lambda x: x['_start_datetime'])
-        
-        playlist = []
+        # Generar la playlist con los programas ordenados
         block_counter = 1
         
-        for i, program in enumerate(valid_programs):
-            # Añadir programa
-            playlist.append({
+        # Primero, crear todos los bloques de programa
+        for program in valid_programs:
+            # Obtener la hora de inicio manual como string
+            start_time_str = program['manual_start_time']
+            
+            # Determinar si el programa es diurno o nocturno
+            is_night = is_time_in_range(
+                start_time_str,
+                self.start_time if self.is_night_schedule else time(0, 0, 0),
+                self.end_time if self.is_night_schedule else time(23, 59, 59),
+                is_night_range=self.is_night_schedule
+            )
+            
+            # Añadir el programa a la playlist
+            self.playlist.append({
                 "item": self.item_counter,
-                "start_time": program['_start_datetime'].strftime("%H:%M:%S"),
+                "start_time": start_time_str,
                 "name": program['name'],
                 "duration": format_duration(program['duration_seconds']),
                 "duration_seconds": program['duration_seconds'],
                 "type": "Program",
                 "block": block_counter,
                 "is_copied": False,
-                "schedule_type": "night" if self.is_night_schedule else "day"
+                "schedule_type": "night" if is_night else "day"
             })
             self.item_counter += 1
             
-            # Añadir tanda después del programa
-            tanda_start = program['_end_datetime']
-            playlist.append({
+            # Calcular la hora de fin del programa
+            end_time_str = calculate_end_time(start_time_str, program['duration_seconds'])
+            
+            # Añadir una tanda después del programa
+            self.playlist.append({
                 "item": self.item_counter,
-                "start_time": tanda_start.strftime("%H:%M:%S"),
+                "start_time": end_time_str,
                 "name": "Tanda 60s",
                 "duration": format_duration(CONFIG["tanda_duration"]),
                 "duration_seconds": CONFIG["tanda_duration"],
                 "type": "Tanda",
                 "block": block_counter,
                 "is_copied": False,
-                "schedule_type": "night" if self.is_night_schedule else "day"
+                "schedule_type": "night" if is_night else "day"
             })
             self.item_counter += 1
-            tanda_end = tanda_start + timedelta(seconds=CONFIG["tanda_duration"])
             
-            # Manejar espacio hasta el siguiente programa
-            if i < len(valid_programs) - 1:
-                next_program_start = valid_programs[i+1]['_start_datetime']
-                time_available = (next_program_start - tanda_end).total_seconds()
+            # Calcular tiempo hasta el próximo programa
+            next_program_idx = valid_programs.index(program) + 1
+            if next_program_idx < len(valid_programs):
+                next_program = valid_programs[next_program_idx]
+                next_start_time = next_program['manual_start_time']
                 
-                if time_available > 0:
+                # Calcular tiempo disponible entre el fin de la tanda y el inicio del siguiente programa
+                tanda_end_time = calculate_end_time(end_time_str, CONFIG["tanda_duration"])
+                
+                # Convertir a datetime para calcular la diferencia
+                tanda_end_dt = datetime.strptime(tanda_end_time, "%H:%M:%S")
+                next_start_dt = datetime.strptime(next_start_time, "%H:%M:%S")
+                
+                # Ajustar si el siguiente programa es del día siguiente
+                if next_start_dt < tanda_end_dt:
+                    next_start_dt += timedelta(days=1)
+                
+                time_until_next = (next_start_dt - tanda_end_dt).total_seconds()
+                
+                # Si hay tiempo suficiente, añadir promos y fillers
+                if time_until_next > 0:
+                    # Crear una combinación de promos y fillers para rellenar el tiempo
                     content_manager = ContentManager(self.promos, self.fillers)
-                    fillers = content_manager.find_optimal_combination(time_available)
+                    optimal_combination = content_manager.find_optimal_combination(time_until_next)
                     
-                    current_time = tanda_end
-                    for item in fillers:
-                        playlist.append({
-                            "item": self.item_counter,
-                            "start_time": current_time.strftime("%H:%M:%S"),
-                            "name": item['name'],
-                            "duration": format_duration(item['duration_seconds']),
-                            "duration_seconds": item['duration_seconds'],
-                            "type": item['type'],
-                            "block": block_counter,
-                            "is_copied": False,
-                            "schedule_type": "night" if self.is_night_schedule else "day"
-                        })
-                        self.item_counter += 1
-                        current_time += timedelta(seconds=item['duration_seconds'])
+                    if optimal_combination:
+                        current_time = tanda_end_time
+                        for item in optimal_combination:
+                            self.playlist.append({
+                                "item": self.item_counter,
+                                "start_time": current_time,
+                                "name": item['name'],
+                                "duration": format_duration(item['duration_seconds']),
+                                "duration_seconds": item['duration_seconds'],
+                                "type": item['type'],
+                                "block": block_counter,
+                                "is_copied": False,
+                                "schedule_type": "night" if is_night else "day"
+                            })
+                            
+                            self.item_counter += 1
+                            current_time = calculate_end_time(current_time, item['duration_seconds'])
             
             block_counter += 1
         
-        return playlist
+        # Ordenar la playlist por hora de inicio
+        self.playlist.sort(key=lambda x: x['start_time'])
+        
+        # Renumerar los ítems para mantener una secuencia continua
+        for i, item in enumerate(self.playlist, start=1):
+            item['item'] = i
+        
+        return self.playlist
     
-
     def _add_block_zero(self):
         """Añade el bloque 0 (tanda inicial) a la playlist."""
         self.playlist.append({
@@ -1160,8 +1124,6 @@ class ContentManager:
 # ----------------------------------------------
 # Funciones de exportación
 # ----------------------------------------------
-
-
 def export_to_google_sheets(playlist, sheet_title):
     """
     Exporta la playlist a Google Sheets.
@@ -1202,33 +1164,20 @@ def export_to_google_sheets(playlist, sheet_title):
         rows = []
         formats = []
         for i, block in enumerate(playlist, start=2):  # Comenzar desde la fila 2
-            # Asegurar que todos los campos requeridos existen
-            item = block.get('item', '')
-            start_time = block.get('start_time', '')
-            name = block.get('name', '')
-            
-            # Manejar el campo 'duration' cuidadosamente
-            duration = block.get('duration', '')
-            if not duration and 'duration_seconds' in block:
-                duration = format_duration(block['duration_seconds'])
-                
-            type_ = block.get('type', '')
-            
             rows.append([
-                item,
-                start_time,
-                name,
-                duration,
-                type_
+                block['item'],  # Número de ítem
+                block['start_time'],
+                block['name'],
+                block['duration'],
+                block['type']
             ])
-            
             # Aplicar formato de color según el tipo
             row_range = f'A{i}:E{i}'
             formats.append({
                 "range": row_range,
                 "format": {
-                    "backgroundColor": type_colors.get(type_),  # Usar el color correspondiente
-                    "textFormat": {"bold": type_ in ['Program', 'Tanda']}
+                    "backgroundColor": type_colors.get(block['type']),  # Usar el color correspondiente
+                    "textFormat": {"bold": block['type'] in ['Program', 'Tanda']}
                 }
             })
 
@@ -1256,6 +1205,7 @@ def export_to_google_sheets(playlist, sheet_title):
         MessageManager.add_message("error", f"Error al exportar a Google Sheets: {e}")
         logger.exception("Excepción durante la exportación")
         return False
+
 # ----------------------------------------------
 # Interfaz de usuario con Streamlit
 # ----------------------------------------------
@@ -1286,30 +1236,6 @@ def main():
     if 'use_manual_times' not in st.session_state:
         st.session_state.use_manual_times = False
     
-    if 'use_24h_schedule' not in st.session_state:
-        st.session_state.use_24h_schedule = True
-    
-    if 'use_night_schedule' not in st.session_state:
-        st.session_state.use_night_schedule = False
-    
-    if 'start_time' not in st.session_state:
-        st.session_state.start_time = datetime.strptime("06:00:00", "%H:%M:%S").time()
-    
-    if 'duration_hours' not in st.session_state:
-        st.session_state.duration_hours = 24
-    
-    if 'day_start_time' not in st.session_state:
-        st.session_state.day_start_time = datetime.strptime(CONFIG["default_times"]["day_start"], "%H:%M:%S").time()
-    
-    if 'day_end_time' not in st.session_state:
-        st.session_state.day_end_time = datetime.strptime(CONFIG["default_times"]["day_end"], "%H:%M:%S").time()
-    
-    if 'night_start_time' not in st.session_state:
-        st.session_state.night_start_time = datetime.strptime(CONFIG["default_times"]["night_start"], "%H:%M:%S").time()
-    
-    if 'night_end_time' not in st.session_state:
-        st.session_state.night_end_time = datetime.strptime(CONFIG["default_times"]["night_end"], "%H:%M:%S").time()
-
     # ------------------------------------------------------
     # Título
     # ------------------------------------------------------
@@ -1344,93 +1270,65 @@ def main():
         )
         
         # Configuración de horarios
-        st.subheader("⏰ Configuración de Horarios")
-        st.session_state.use_24h_schedule = st.checkbox(
-            "📅 Playlist de 24 horas", 
-            value=st.session_state.use_24h_schedule,
-            help="Genera una playlist continua de 24 horas"
+        st.subheader("⏰ Horarios")
+        use_night_schedule = st.checkbox("🌙 Horario nocturno", value=False)
+        
+        day_start_time = st.time_input(
+            "Inicio (diurno)", 
+            value=datetime.strptime(CONFIG["default_times"]["day_start"], "%H:%M:%S").time()
         )
         
-        if st.session_state.use_24h_schedule:
-            st.session_state.start_time = st.time_input(
-                "🕒 Hora de inicio", 
-                value=st.session_state.start_time,
-                help="Hora de inicio de la programación"
-            )
-            st.session_state.duration_hours = st.slider(
-                "⏳ Duración (horas)", 
-                1, 24, st.session_state.duration_hours,
-                help="Duración total de la playlist en horas"
-            )
-        else:
-            st.session_state.use_night_schedule = st.checkbox(
-                "🌙 Horario nocturno", 
-                value=st.session_state.use_night_schedule,
-                help="Incluir programación nocturna diferenciada"
+        day_end_time = st.time_input(
+            "Fin (diurno)", 
+            value=datetime.strptime(CONFIG["default_times"]["day_end"], "%H:%M:%S").time()
+        )
+        
+        if use_night_schedule:
+            night_start_time = st.time_input(
+                "Inicio (nocturno)", 
+                value=datetime.strptime(CONFIG["default_times"]["night_start"], "%H:%M:%S").time()
             )
             
-            st.session_state.day_start_time = st.time_input(
-                "☀️ Inicio (diurno)", 
-                value=st.session_state.day_start_time,
-                help="Hora de inicio del horario diurno"
+            night_end_time = st.time_input(
+                "Fin (nocturno)", 
+                value=datetime.strptime(CONFIG["default_times"]["night_end"], "%H:%M:%S").time()
             )
-            
-            st.session_state.day_end_time = st.time_input(
-                "🌇 Fin (diurno)", 
-                value=st.session_state.day_end_time,
-                help="Hora de fin del horario diurno"
-            )
-            
-            if st.session_state.use_night_schedule:
-                st.session_state.night_start_time = st.time_input(
-                    "🌃 Inicio (nocturno)", 
-                    value=st.session_state.night_start_time,
-                    help="Hora de inicio del horario nocturno"
-                )
-                
-                st.session_state.night_end_time = st.time_input(
-                    "🌌 Fin (nocturno)", 
-                    value=st.session_state.night_end_time,
-                    help="Hora de fin del horario nocturno"
-                )
         
         # Opción para asignar horarios manualmente
         st.subheader("🕒 Asignación de horarios")
-        st.session_state.use_manual_times = st.checkbox(
-            "⏱️ Asignar horarios manualmente a los programas", 
+        use_manual_times = st.checkbox(
+            "Asignar horarios manualmente a los programas", 
             value=st.session_state.use_manual_times,
             help="Permite asignar una hora de inicio específica a cada programa"
         )
+        st.session_state.use_manual_times = use_manual_times
         
         # Botón para cargar programas
-        if st.button("📥 Cargar programas", use_container_width=True):
+        if st.button("Cargar programas", use_container_width=True):
             with st.spinner("🔍 Cargando datos..."):
-                # Cargar programas diurnos siempre
-                st.session_state.day_programs = load_programs_from_google_sheet("dia")
+                # Cargar programas
+                day_programs = load_programs_from_google_sheet("dia")
+                night_programs = load_programs_from_google_sheet("noche") if use_night_schedule else []
                 
-                # Cargar programas nocturnos solo si el modo nocturno está activado
-                if not st.session_state.use_24h_schedule and st.session_state.use_night_schedule:
-                    st.session_state.night_programs = load_programs_from_google_sheet("noche")
-                else:
-                    st.session_state.night_programs = []
+                # Guardar en session_state para usarlos en la asignación manual
+                st.session_state.day_programs = day_programs
+                st.session_state.night_programs = night_programs
                 
-                # Mensajes de feedback
-                if not st.session_state.day_programs:
+                if not day_programs:
                     MessageManager.add_message("warning", "No se pudieron cargar los programas diurnos")
                 else:
-                    MessageManager.add_message("success", f"✅ Programas diurnos cargados: {len(st.session_state.day_programs)}")
+                    MessageManager.add_message("success", f"Programas diurnos cargados: {len(day_programs)}")
                 
-                if not st.session_state.use_24h_schedule and st.session_state.use_night_schedule:
-                    if not st.session_state.night_programs:
-                        MessageManager.add_message("warning", "No se pudieron cargar los programas nocturnos")
-                    else:
-                        MessageManager.add_message("success", f"✅ Programas nocturnos cargados: {len(st.session_state.night_programs)}")
+                if use_night_schedule and not night_programs:
+                    MessageManager.add_message("warning", "No se pudieron cargar los programas nocturnos")
+                elif use_night_schedule:
+                    MessageManager.add_message("success", f"Programas nocturnos cargados: {len(night_programs)}")
     
     # ------------------------------------------------------
     # Columna 2: Asignación manual de horarios (si está activada)
     # ------------------------------------------------------
     with col2:
-        if st.session_state.use_manual_times and (st.session_state.day_programs or st.session_state.night_programs):
+        if use_manual_times and (st.session_state.day_programs or st.session_state.night_programs):
             st.header("🕒 Asignación manual de horarios")
             
             # Programas diurnos
@@ -1439,6 +1337,7 @@ def main():
                 st.markdown("---")
                 
                 for i, program in enumerate(st.session_state.day_programs):
+                    # Crear un contenedor para cada programa
                     program_container = st.container()
                     
                     with program_container:
@@ -1448,37 +1347,47 @@ def main():
                             st.markdown(f"**{program['name']}**")
                         
                         with col_time:
+                            # Usar un key único para cada time_input
                             time_key = f"day_time_{i}"
+                            # Obtener el valor actual o usar None
                             current_time = program.get('manual_start_time')
                             if current_time:
                                 current_time = datetime.strptime(current_time, "%H:%M:%S").time()
                             else:
-                                base_time = datetime.combine(date.today(), st.session_state.start_time if st.session_state.use_24h_schedule else st.session_state.day_start_time)
+                                # Usar un valor predeterminado basado en el índice, siempre con minutos en 00
+                                base_time = datetime.combine(date.today(), day_start_time)
                                 increment = timedelta(hours=1) * i
                                 current_time = (base_time + increment).replace(minute=0, second=0).time()
                             
+                            # Mostrar el selector de tiempo
                             selected_time = st.time_input("Inicio", value=current_time, key=time_key)
+                            # Forzar minutos a 00 para todos los horarios
+                            selected_time = time(selected_time.hour, 0, 0)
+                            # Guardar el valor seleccionado
                             st.session_state.day_programs[i]['manual_start_time'] = selected_time.strftime("%H:%M:%S")
                         
                         with col_duration:
-                            st.markdown(f"**⏱️ Duración:**  \n{program['duration_formatted']}")
+                            st.markdown(f"**Duración:**  \n{program['duration_formatted']}")
                         
                         with col_end:
+                            # Calcular y mostrar la hora de fin
                             end_time = calculate_end_time(
                                 st.session_state.day_programs[i]['manual_start_time'],
                                 program['duration_seconds']
                             )
-                            st.markdown(f"**🕘 Fin:**  \n{end_time}")
+                            st.markdown(f"**Fin:**  \n{end_time}")
                     
+                    # Añadir una línea divisoria entre programas
                     if i < len(st.session_state.day_programs) - 1:
                         st.markdown("---")
             
             # Programas nocturnos
-            if not st.session_state.use_24h_schedule and st.session_state.use_night_schedule and st.session_state.night_programs:
+            if st.session_state.night_programs:
                 st.markdown("### 🌙 Programas nocturnos")
                 st.markdown("---")
                 
                 for i, program in enumerate(st.session_state.night_programs):
+                    # Crear un contenedor para cada programa
                     program_container = st.container()
                     
                     with program_container:
@@ -1488,71 +1397,91 @@ def main():
                             st.markdown(f"**{program['name']}**")
                         
                         with col_time:
+                            # Usar un key único para cada time_input
                             time_key = f"night_time_{i}"
+                            # Obtener el valor actual o usar None
                             current_time = program.get('manual_start_time')
                             if current_time:
                                 current_time = datetime.strptime(current_time, "%H:%M:%S").time()
                             else:
-                                base_time = datetime.combine(date.today(), st.session_state.night_start_time)
+                                # Usar un valor predeterminado basado en el índice, siempre con minutos en 00
+                                base_time = datetime.combine(date.today(), night_start_time)
                                 increment = timedelta(hours=1) * i
                                 current_time = (base_time + increment).replace(minute=0, second=0).time()
                             
+                            # Mostrar el selector de tiempo
                             selected_time = st.time_input("Inicio", value=current_time, key=time_key)
+                            # Forzar minutos a 00 para todos los horarios
+                            selected_time = time(selected_time.hour, 0, 0)
+                            # Guardar el valor seleccionado
                             st.session_state.night_programs[i]['manual_start_time'] = selected_time.strftime("%H:%M:%S")
                         
                         with col_duration:
-                            st.markdown(f"**⏱️ Duración:**  \n{program['duration_formatted']}")
+                            st.markdown(f"**Duración:**  \n{program['duration_formatted']}")
                         
                         with col_end:
+                            # Calcular y mostrar la hora de fin
                             end_time = calculate_end_time(
                                 st.session_state.night_programs[i]['manual_start_time'],
                                 program['duration_seconds']
                             )
-                            st.markdown(f"**🕘 Fin:**  \n{end_time}")
+                            st.markdown(f"**Fin:**  \n{end_time}")
                     
+                    # Añadir una línea divisoria entre programas
                     if i < len(st.session_state.night_programs) - 1:
                         st.markdown("---")
             
             # Validar horarios asignados
-            if st.button("✅ Validar horarios", use_container_width=True):
-                day_progs = []
+            if st.button("Validar horarios", use_container_width=True):
+                # Validar que no haya solapamientos
+                all_programs = []
                 if st.session_state.day_programs:
-                    day_progs = [p for p in st.session_state.day_programs if p.get('manual_start_time')]
+                    all_programs.extend(st.session_state.day_programs)
+                if st.session_state.night_programs:
+                    all_programs.extend(st.session_state.night_programs)
                 
-                night_progs = []
-                if not st.session_state.use_24h_schedule and st.session_state.use_night_schedule and st.session_state.night_programs:
-                    night_progs = [p for p in st.session_state.night_programs if p.get('manual_start_time')]
+                # Filtrar programas con horario asignado
+                valid_programs = [p for p in all_programs if p.get('manual_start_time')]
                 
-                is_valid, overlaps = validate_schedules(
-                    day_progs,
-                    night_progs,
-                    st.session_state.day_start_time if not st.session_state.use_24h_schedule else st.session_state.start_time,
-                    st.session_state.night_start_time if not st.session_state.use_24h_schedule and st.session_state.use_night_schedule else None
-                )
-                
-                if not is_valid:
-                    st.error("❌ Conflictos de horario detectados:")
-                    cols = st.columns(2)
-                    for i, (prog1, prog2) in enumerate(overlaps):
-                        cols[i%2].warning(f"⏰ {prog1} ↔ {prog2}")
+                if not valid_programs:
+                    MessageManager.add_message("warning", "No hay programas con horarios asignados")
                 else:
-                    st.success("✅ Horarios válidos (sin conflictos)")
+                    # Ordenar por hora de inicio
+                    valid_programs.sort(key=lambda x: x['manual_start_time'])
+                    
+                    # Verificar solapamientos
+                    overlaps = []
+                    for i in range(len(valid_programs) - 1):
+                        current = valid_programs[i]
+                        next_prog = valid_programs[i + 1]
+                        
+                        current_end = calculate_end_time(
+                            current['manual_start_time'],
+                            current['duration_seconds']
+                        )
+                        
+                        if current_end > next_prog['manual_start_time']:
+                            overlaps.append((current['name'], next_prog['name']))
+                    
+                    if overlaps:
+                        overlap_msg = "Se detectaron solapamientos entre los siguientes programas:\n"
+                        for p1, p2 in overlaps:
+                            overlap_msg += f"- {p1} y {p2}\n"
+                        MessageManager.add_message("error", overlap_msg)
+                    else:
+                        MessageManager.add_message("success", "Horarios validados correctamente. No hay solapamientos.")
         else:
             st.header("✨ Generar Playlist")
             
             block_interval = st.slider(
-                "⏱️ Intervalo entre bloques (min)", 
+                "Intervalo entre bloques (min)", 
                 CONFIG["block_intervals"]["min"], 
                 CONFIG["block_intervals"]["max"], 
                 CONFIG["block_intervals"]["default"], 
                 key="block_interval"
             )
             
-            max_partial = st.number_input(
-                "⏳ Duración máxima tanda parcial (s)", 
-                10, 60, 30, 
-                key="max_partial"
-            )
+            max_partial = st.number_input("Duración máxima tanda parcial (s)", 10, 60, 30, key="max_partial")
     
     # ------------------------------------------------------
     # Columna 3: Generación y exportación
@@ -1560,62 +1489,77 @@ def main():
     with col3:
         st.header("🚀 Generar y Exportar")
         
-        if st.button("🎵 Generar Playlist", type="primary", use_container_width=True):
+        if st.button("Generar Playlist", type="primary", use_container_width=True):
             with st.spinner("🔍 Generando playlist..."):
-                # Cargar datos
-                promos = load_promos_from_google_sheet()
-                fillers = load_fillers_from_google_sheet(selected_sheet) if sheets else []
-                
-                if not st.session_state.day_programs or not promos or not fillers:
-                    MessageManager.add_message("warning", "⚠️ Faltan datos para generar la playlist")
+                # Validar horarios
+                if day_start_time >= day_end_time and day_end_time != datetime.strptime("00:00:00", "%H:%M:%S").time():
+                    MessageManager.add_message("error", "El horario de fin diurno debe ser posterior al de inicio")
+                # Para horarios nocturnos, no validamos que la hora de fin sea posterior a la de inicio
+                # ya que es normal que la hora de fin (ej. 06:00) sea anterior a la hora de inicio (ej. 21:00)
                 else:
-                    # Generar playlist diurna
-                    day_generator = PlaylistGenerator(
-                        st.session_state.day_start_time,
-                        end_time=st.session_state.day_end_time,
-                        promos=promos,
-                        fillers=fillers,
-                        user_programs=st.session_state.day_programs,
-                        reference_date=reference_date,
-                        use_manual_times=st.session_state.use_manual_times
-                    )
-                    day_playlist = day_generator.generate()
+                    # Cargar datos si no se han cargado previamente
+                    day_programs = st.session_state.day_programs or load_programs_from_google_sheet("dia")
+                    night_programs = st.session_state.night_programs or (load_programs_from_google_sheet("noche") if use_night_schedule else [])
+                    promos = load_promos_from_google_sheet()
+                    fillers = load_fillers_from_google_sheet(selected_sheet) if sheets else []
                     
-                    # Generar playlist nocturna (si aplica)
-                    night_playlist = []
-                    if (not st.session_state.use_24h_schedule and 
-                        st.session_state.use_night_schedule and 
-                        st.session_state.night_programs):
-                        
-                        night_generator = PlaylistGenerator(
-                            st.session_state.night_start_time,
-                            end_time=st.session_state.night_end_time,
-                            promos=promos,
-                            fillers=fillers,
-                            user_programs=st.session_state.night_programs,
-                            reference_date=reference_date,
-                            use_manual_times=st.session_state.use_manual_times,
-                            is_night_schedule=True
-                        )
-                        night_playlist = night_generator.generate()
-                    
-                    # Combinar playlists
-                    st.session_state.playlist = day_playlist + night_playlist
-                    
-                    # Renumerar items
-                    for i, item in enumerate(st.session_state.playlist, start=1):
-                        item['item'] = i
-                    
-                    # Mensaje de confirmación
-                    if st.session_state.playlist:
-                        day_count = len(day_playlist)
-                        night_count = len(night_playlist)
-                        MessageManager.add_message("success", 
-                            f"✅ Playlist generada con {len(st.session_state.playlist)} elementos\n"
-                            f"  - Diurnos: {day_count} items\n"
-                            f"  - Nocturnos: {night_count} items")
+                    if not day_programs or not promos or not fillers:
+                        MessageManager.add_message("warning", "Faltan datos para generar la playlist")
                     else:
-                        MessageManager.add_message("error", "❌ No se pudo generar la playlist")
+                        # Generar playlist diurna
+                        day_generator = PlaylistGenerator(
+                            day_start_time,
+                            day_end_time,
+                            promos,
+                            fillers,
+                            day_programs,
+                            reference_date=reference_date,
+                            use_manual_times=use_manual_times
+                        )
+                        day_playlist = day_generator.generate()
+                        
+                        # Generar playlist nocturna si es necesario
+                        night_playlist = []
+                        if use_night_schedule and night_programs:
+                            # Crear un datetime específico para el inicio del horario nocturno
+                            # Esto asegura que los programas nocturnos comiencen a la hora correcta
+                            night_start_datetime = datetime.combine(reference_date, night_start_time)
+                            
+                            night_generator = PlaylistGenerator(
+                                night_start_time,
+                                night_end_time,
+                                promos,
+                                fillers,
+                                night_programs,
+                                include_block_zero=False,
+                                is_night_schedule=True,
+                                reference_date=reference_date,
+                                force_start_datetime=night_start_datetime,  # Forzar el inicio a la hora nocturna exacta
+                                use_manual_times=use_manual_times
+                            )
+                            night_playlist = night_generator.generate()
+                        
+                        # Combinar playlists manteniendo los bloques separados
+                        # En lugar de ordenar por hora, simplemente concatenamos las playlists
+                        # para mantener todos los elementos diurnos juntos y luego todos los nocturnos
+                        st.session_state.playlist = day_playlist + night_playlist
+                        
+                        # Renumerar los ítems para mantener una secuencia continua
+                        for i, item in enumerate(st.session_state.playlist, start=1):
+                            item['item'] = i
+                        
+                        if st.session_state.playlist:
+                            # Contar tipos de elementos
+                            type_counts = {}
+                            for item in st.session_state.playlist:
+                                item_type = item['type']
+                                type_counts[item_type] = type_counts.get(item_type, 0) + 1
+                            
+                            # Crear mensaje detallado
+                            details = ", ".join([f"{count} {tipo}s" for tipo, count in type_counts.items()])
+                            MessageManager.add_message("success", f"Playlist generada correctamente con {len(st.session_state.playlist)} elementos ({details})")
+                        else:
+                            MessageManager.add_message("warning", "No se pudo generar la playlist")
         
         st.markdown("---")
         
@@ -1628,74 +1572,140 @@ def main():
         )
         st.session_state.sheet_title = new_sheet_name
         
-        if st.button("📊 Exportar a Google Sheets", use_container_width=True):
+        if st.button("Exportar a Google Sheets", use_container_width=True):
             if st.session_state.playlist:
-                with st.spinner("⏳ Exportando..."):
-                    if export_to_google_sheets(st.session_state.playlist, st.session_state.sheet_title):
-                        MessageManager.add_message("success", "✅ Playlist exportada correctamente")
-                    else:
-                        MessageManager.add_message("error", "❌ Error al exportar la playlist")
+                with st.spinner("📤 Exportando..."):
+                    export_to_google_sheets(st.session_state.playlist, st.session_state.sheet_title)
             else:
-                MessageManager.add_message("error", "❌ No hay playlist para exportar")
+                MessageManager.add_message("error", "No hay playlist para exportar")
         
         st.header("📢 Notificaciones")
         MessageManager.display_messages(3)
     
     # ------------------------------------------------------
-    # Vista previa de la playlist
+    # Vista previa de la playlist (debajo de las columnas)
     # ------------------------------------------------------
     st.markdown("---")
     st.header("📜 Vista Previa de la Playlist")
     
     if st.session_state.playlist:
+        # Asegurarse de que la playlist esté ordenada antes de mostrarla
         playlist_df = pd.DataFrame(st.session_state.playlist)
         
-        # Aplicar estilos
-        def color_row(row):
-            colors = {
-                'Program': 'background-color: white; color: black;',
-                'Tanda': 'background-color: #00FF00; color: black;',
-                'Promo': 'background-color: #46BDC6; color: black;',
-                'Filler': 'background-color: #808080; color: white;',
-                'Tanda Parcial': 'background-color: #FFFF00; color: black;'
-            }
-            return [colors.get(row['type'], '')] * len(row)
+        # Definir colores para la tabla
+        type_colors = {
+            'Program': 'background-color: #FFFFFF; color: #000000;',  # Blanco
+            'Tanda': 'background-color: #00FF00; color: #000000;',    # Verde
+            'Promo': 'background-color: #46bdc6; color: #000000;',   # Turquesa
+            'Filler': 'background-color: #808080; color: #FFFFFF;',  # Gris
+            'Tanda Parcial': 'background-color: #FFFF00; color: #000000;',  # Amarillo
+        }
         
-        styled_df = playlist_df.style.apply(color_row, axis=1)
+        def apply_colors(row):
+            """Aplica colores a las filas según el tipo de contenido."""
+            color = type_colors.get(row['type'], '')
+            if row['is_copied']:
+                color += ' border: 2px solid red;'  # Resaltar ítems copiados con borde rojo
+            return [color] * len(row)
         
+        styled_playlist = playlist_df.style.apply(apply_colors, axis=1)
+        
+        # Mostrar la tabla con la playlist
         st.dataframe(
-            styled_df,
+            styled_playlist,
             column_config={
                 "item": "Ítem",
-                "start_time": "Hora Inicio",
+                "start_time": {"label": "Hora Inicio", "help": "Hora de inicio del bloque"},
                 "name": "Contenido",
                 "duration": "Duración",
-                "type": "Tipo",
+                "type": {"label": "Tipo", "help": "Tipo de contenido (Programa, Tanda, etc.)"},
                 "block": "Bloque",
-                "is_copied": "Es Copia",
-                "schedule_type": "Horario"
+                "is_copied": {"label": "Es Copia", "help": "Indica si el ítem es una copia de un bloque anterior"},
+                "schedule_type": {"label": "Horario", "help": "Indica si el ítem pertenece al horario diurno o nocturno"}
             },
             use_container_width=True,
+            hide_index=True,
             height=600
         )
         
-        # Estadísticas
-        st.subheader("📊 Estadísticas")
-        cols = st.columns(3)
-        with cols[0]:
-            st.metric("Total elementos", len(st.session_state.playlist))
-        with cols[1]:
-            total_seconds = sum(item['duration_seconds'] for item in st.session_state.playlist)
-            st.metric("Duración total", format_duration(total_seconds))
-        with cols[2]:
-            st.metric("Bloques", playlist_df['block'].nunique())
+        # Añadir filtros y búsqueda
+        st.subheader("🔍 Filtrar Playlist")
         
-        # Debug: Mostrar conteo de programas nocturnos
-        if st.checkbox("Mostrar detalles de depuración"):
-            st.write("Programas nocturnos cargados:", len(st.session_state.night_programs) if st.session_state.night_programs else "No hay programas nocturnos")
-            st.write("Items nocturnos generados:", len([i for i in st.session_state.playlist if i.get('schedule_type') == 'night']))
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Filtro por tipo
+            tipos = ["Todos"] + sorted(playlist_df["type"].unique().tolist())
+            tipo_seleccionado = st.selectbox("Filtrar por tipo:", tipos)
+            
+            if tipo_seleccionado != "Todos":
+                filtered_df = playlist_df[playlist_df["type"] == tipo_seleccionado]
+                st.write(f"Mostrando {len(filtered_df)} elementos de tipo '{tipo_seleccionado}'")
+                
+                styled_filtered = filtered_df.style.apply(apply_colors, axis=1)
+                st.dataframe(
+                    styled_filtered,
+                    use_container_width=True,
+                    hide_index=True
+                )
+        
+        with col2:
+            # Filtro por horario
+            horarios = ["Todos", "day", "night"]
+            horario_seleccionado = st.selectbox("Filtrar por horario:", horarios)
+            
+            if horario_seleccionado != "Todos":
+                filtered_df = playlist_df[playlist_df["schedule_type"] == horario_seleccionado]
+                st.write(f"Mostrando {len(filtered_df)} elementos del horario '{horario_seleccionado}'")
+                
+                styled_filtered = filtered_df.style.apply(apply_colors, axis=1)
+                st.dataframe(
+                    styled_filtered,
+                    use_container_width=True,
+                    hide_index=True
+                )
+        
+        # Estadísticas de la playlist
+        st.subheader("📊 Estadísticas de la Playlist")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Duración total
+            total_duration = playlist_df["duration_seconds"].sum()
+            st.metric("Duración Total", format_duration(total_duration))
+            
+            # Distribución por tipo
+            st.write("Distribución por tipo:")
+            type_counts = playlist_df["type"].value_counts()
+            st.bar_chart(type_counts)
+        
+        with col2:
+            # Número de elementos
+            st.metric("Número de Elementos", len(playlist_df))
+            
+            # Número de bloques
+            num_blocks = playlist_df["block"].nunique()
+            st.metric("Número de Bloques", num_blocks)
+            
+            # Elementos por bloque
+            elements_per_block = playlist_df.groupby("block").size()
+            avg_elements = elements_per_block.mean()
+            st.metric("Promedio de Elementos por Bloque", f"{avg_elements:.2f}")
+        
+        with col3:
+            # Distribución por horario
+            st.write("Distribución por horario:")
+            schedule_counts = playlist_df["schedule_type"].value_counts()
+            st.bar_chart(schedule_counts)
+            
+            # Duración promedio por tipo
+            avg_duration = playlist_df.groupby("type")["duration_seconds"].mean().apply(lambda x: format_duration(x))
+            st.write("Duración promedio por tipo:")
+            for tipo, duracion in avg_duration.items():
+                st.metric(f"{tipo}", duracion)
     else:
-        st.info("ℹ️ No hay playlist generada. Configura los parámetros y haz clic en 'Generar Playlist'.")
+        st.info("No hay playlist generada. Configura los parámetros y haz clic en 'Generar Playlist'.")
 
 if __name__ == "__main__":
     main()
